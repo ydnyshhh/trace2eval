@@ -6,6 +6,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from trace2eval.mining import rank_hypotheses
 from trace2eval.schemas import FailureHypothesis, NormalizedTrace, Report, RunResult
 
 
@@ -14,7 +15,10 @@ def build_report(
     failures: list[FailureHypothesis],
     run_results: list[RunResult] | None = None,
 ) -> Report:
-    top_failure_types = Counter(item.failure_type for item in failures)
+    trace_by_id = {trace.trace_id: trace for trace in traces}
+    ranked_failures = rank_failures_by_trace(trace_by_id, failures)
+    flattened_failures = [failure for trace_failures in ranked_failures.values() for failure in trace_failures]
+    top_failure_types = Counter(item.failure_type for item in flattened_failures)
     successful = sum(1 for trace in traces if trace.outcome.success is True)
     failed = sum(1 for trace in traces if trace.outcome.success is False)
     examples = [
@@ -24,7 +28,7 @@ def build_report(
             "onset_step_id": failure.onset_step_id,
             "evidence": failure.evidence[:2],
         }
-        for failure in failures[:5]
+        for failure in flattened_failures[:5]
     ]
     return Report(
         total_traces=len(traces),
@@ -70,7 +74,8 @@ def print_terminal_report(
         failures_by_trace[failure.trace_id].append(failure)
 
     for trace in traces:
-        print_trace_timeline(trace, failures_by_trace.get(trace.trace_id, []), console=console)
+        trace_failures = rank_hypotheses(trace, failures_by_trace.get(trace.trace_id, []))
+        print_trace_timeline(trace, trace_failures, console=console)
 
 
 def print_trace_timeline(
@@ -104,3 +109,44 @@ def print_trace_timeline(
             ", ".join(markers.get(step.step_id, [])),
         )
     console.print(timeline)
+    print_causal_summary(failures or [], console=console)
+
+
+def print_causal_summary(
+    failures: list[FailureHypothesis],
+    *,
+    console: Console | None = None,
+) -> None:
+    if not failures:
+        return
+    console = console or Console()
+    groups = {
+        "Primary root cause": [failure for failure in failures if failure.metadata.get("causal_role") == "primary_root_cause"],
+        "Supporting symptoms": [failure for failure in failures if failure.metadata.get("causal_role") == "supporting_symptom"],
+        "Downstream failures": [failure for failure in failures if failure.metadata.get("causal_role") == "downstream_failure"],
+    }
+    table = Table(title="Causal Hypothesis")
+    table.add_column("Role")
+    table.add_column("Failure")
+    table.add_column("Step", justify="right")
+    for role, items in groups.items():
+        if not items:
+            table.add_row(role, "none", "")
+            continue
+        for index, failure in enumerate(items):
+            step = "" if failure.onset_step_id is None else str(failure.onset_step_id)
+            table.add_row(role if index == 0 else "", failure.failure_type, step)
+    console.print(table)
+
+
+def rank_failures_by_trace(
+    traces: dict[str, NormalizedTrace],
+    failures: list[FailureHypothesis],
+) -> dict[str, list[FailureHypothesis]]:
+    grouped: dict[str, list[FailureHypothesis]] = defaultdict(list)
+    for failure in failures:
+        grouped[failure.trace_id].append(failure)
+    return {
+        trace_id: rank_hypotheses(traces[trace_id], trace_failures) if trace_id in traces else trace_failures
+        for trace_id, trace_failures in grouped.items()
+    }

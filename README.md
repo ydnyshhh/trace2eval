@@ -119,6 +119,8 @@ The adapter preserves session id, usage metadata, structured output, messages, t
 - `trace2eval benchmark --fixtures examples/real_runs`: score curated real-run fixture notes against detected primary failure types.
 - `trace2eval report --traces .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl`: print a Rich terminal report.
 
+Reports include a per-trace timeline plus a causal hypothesis section that separates the primary root cause, supporting symptoms, and downstream failures.
+
 ## Generated Eval Format
 
 Generated evals are YAML or JSON `EvalCase` objects:
