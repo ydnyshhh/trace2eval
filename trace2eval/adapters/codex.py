@@ -37,15 +37,15 @@ class CodexJSONLAdapter:
     source = TraceSource.CODEX
 
     def ingest(self, path: Path) -> list[RawTrace]:
-        return [self._ingest_file(file) for file in jsonl_files(path)]
+        return [self.ingest_file(file) for file in jsonl_files(path)]
 
-    def _ingest_file(self, path: Path) -> RawTrace:
+    def ingest_file(self, path: Path) -> RawTrace:
         events = read_jsonl_events(path)
         session_id = first_found(events, extract_session_id)
         trace_id = trace_id_for_file(path, session_id)
         related_calls = build_tool_call_index(events)
         steps = [
-            self._event_to_step(index, event, path, related_calls.get(str(event.get("tool_call_id") or event.get("call_id") or "")))
+            self.event_to_step(index, event, path, related_calls.get(str(event.get("tool_call_id") or event.get("call_id") or "")))
             for index, event in enumerate(events)
         ]
         prompt = first_user_prompt(steps)
@@ -61,7 +61,7 @@ class CodexJSONLAdapter:
             metadata={"source_file": str(path), "session_id": session_id, "event_count": len(events)},
         )
 
-    def _event_to_step(self, index: int, event: dict[str, Any], path: Path, related_call: dict[str, Any] | None = None) -> RawStep:
+    def event_to_step(self, index: int, event: dict[str, Any], path: Path, related_call: dict[str, Any] | None = None) -> RawStep:
         related_call = related_call or {}
         event_type = extract_event_type(event)
         is_result = "result" in (event_type or "").lower()

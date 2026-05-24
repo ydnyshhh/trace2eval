@@ -48,11 +48,11 @@ class ClaudeCodeHookJSONLAdapter:
                 key = extract_session_id(event) or f"file:{file}"
                 grouped[key].append(event)
             for session_id, group in grouped.items():
-                traces.append(self._events_to_trace(file, session_id if not session_id.startswith("file:") else None, group))
+                traces.append(self.events_to_trace(file, session_id if not session_id.startswith("file:") else None, group))
         return traces
 
-    def _events_to_trace(self, file: Path, session_id: str | None, events: list[dict[str, Any]]) -> RawTrace:
-        steps = [self._event_to_step(index, event, file) for index, event in enumerate(events)]
+    def events_to_trace(self, file: Path, session_id: str | None, events: list[dict[str, Any]]) -> RawTrace:
+        steps = [self.event_to_step(index, event, file) for index, event in enumerate(events)]
         prompt = first_content_by_event(steps, "UserPromptSubmit") or first_user_prompt(steps)
         repo_path = first_metadata(events, "cwd") or first_metadata(events, "project_dir")
         return RawTrace(
@@ -65,7 +65,7 @@ class ClaudeCodeHookJSONLAdapter:
             metadata={"source_file": str(file), "session_id": session_id, "event_count": len(events)},
         )
 
-    def _event_to_step(self, index: int, event: dict[str, Any], file: Path) -> RawStep:
+    def event_to_step(self, index: int, event: dict[str, Any], file: Path) -> RawStep:
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else event
         return RawStep(
             step_id=index,
@@ -91,16 +91,16 @@ class ClaudeCodeHeadlessJSONAdapter:
     source = TraceSource.CLAUDE_CODE_HEADLESS
 
     def ingest(self, path: Path) -> list[RawTrace]:
-        return [self._ingest_file(file) for file in json_files(path)]
+        return [self.ingest_file(file) for file in json_files(path)]
 
-    def _ingest_file(self, file: Path) -> RawTrace:
+    def ingest_file(self, file: Path) -> RawTrace:
         data = read_json(file)
         root = data if isinstance(data, dict) else {"result": data}
         session_id = extract_session_id(root)
         messages = extract_message_events(root)
         if not messages:
             messages = [root]
-        steps = [self._event_to_step(index, event, file) for index, event in enumerate(messages)]
+        steps = [self.event_to_step(index, event, file) for index, event in enumerate(messages)]
         prompt = first_user_prompt(steps)
         return RawTrace(
             trace_id=trace_id_for_file(file, session_id),
@@ -121,7 +121,7 @@ class ClaudeCodeHeadlessJSONAdapter:
             metadata={"source_file": str(file), "session_id": session_id, "raw_headless_output": root},
         )
 
-    def _event_to_step(self, index: int, event: dict[str, Any], file: Path) -> RawStep:
+    def event_to_step(self, index: int, event: dict[str, Any], file: Path) -> RawStep:
         return RawStep(
             step_id=index,
             timestamp=extract_timestamp(event),
