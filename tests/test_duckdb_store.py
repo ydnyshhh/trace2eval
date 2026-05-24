@@ -57,8 +57,12 @@ def test_duckdb_index_builds_from_example_artifacts(tmp_path: Path) -> None:
     with duckdb.connect(str(paths["db"]), read_only=True) as connection:
         traces = connection.execute("SELECT COUNT(*) FROM traces").fetchone()[0]
         steps = connection.execute("SELECT COUNT(*) FROM steps").fetchone()[0]
+        metadata = dict(connection.execute("SELECT key, value FROM metadata").fetchall())
     assert traces == summary.traces
     assert steps == summary.steps
+    assert metadata["schema_version"] == "1"
+    assert metadata["source"] == "file_index"
+    assert metadata["trace2eval_version"]
 
 
 def test_duckdb_query_top_failures(tmp_path: Path) -> None:

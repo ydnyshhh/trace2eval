@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,8 @@ from trace2eval.io import (
 )
 from trace2eval.normalize import normalize_trace
 from trace2eval.schemas import NormalizedTrace, RawTrace
+
+DUCKDB_SCHEMA_VERSION = "1"
 
 
 @dataclass
@@ -52,11 +56,8 @@ def build_duckdb_index(
     runs, run_warnings = load_optional_runs(runs_path)
 
     ensure_dir(out_path.parent)
-    if out_path.exists():
-        out_path.unlink()
-    wal_path = out_path.with_suffix(out_path.suffix + ".wal")
-    if wal_path.exists():
-        wal_path.unlink()
+    temp_path = temporary_database_path(out_path)
+    cleanup_database_files(temp_path)
 
     summary = IndexSummary(
         traces=len(traces),
@@ -68,13 +69,16 @@ def build_duckdb_index(
         warnings=[*failure_warnings, *eval_warnings, *run_warnings],
     )
 
-    with duckdb.connect(str(out_path)) as connection:
+    with duckdb.connect(str(temp_path)) as connection:
         create_tables(connection)
+        insert_metadata(connection)
         insert_traces(connection, traces)
         insert_steps(connection, traces)
         insert_failures(connection, failures)
         insert_evals(connection, evals)
         insert_runs(connection, runs)
+    cleanup_wal_file(temp_path)
+    replace_database(temp_path, out_path)
     return summary
 
 
@@ -246,6 +250,14 @@ def load_optional_runs(path: Path | None) -> tuple[list[Any], list[str]]:
 def create_tables(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(
         """
+        CREATE OR REPLACE TABLE metadata (
+          key TEXT PRIMARY KEY,
+          value TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
         CREATE OR REPLACE TABLE traces (
           trace_id TEXT PRIMARY KEY,
           source TEXT,
@@ -324,6 +336,16 @@ def create_tables(connection: duckdb.DuckDBPyConnection) -> None:
         )
         """
     )
+
+
+def insert_metadata(connection: duckdb.DuckDBPyConnection) -> None:
+    rows = [
+        ("schema_version", DUCKDB_SCHEMA_VERSION),
+        ("trace2eval_version", trace2eval_version()),
+        ("created_at", datetime.now(UTC).isoformat()),
+        ("source", "file_index"),
+    ]
+    connection.executemany("INSERT INTO metadata (key, value) VALUES (?, ?)", rows)
 
 
 def insert_traces(connection: duckdb.DuckDBPyConnection, traces: list[NormalizedTrace]) -> None:
@@ -493,3 +515,32 @@ def int_or_none(value: Any) -> int | None:
 
 def json_text(value: Any) -> str:
     return json_dumps(model_dump(value)).decode("utf-8")
+
+
+def trace2eval_version() -> str:
+    try:
+        return version("trace2eval")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def temporary_database_path(out_path: Path) -> Path:
+    suffix = out_path.suffix or ".duckdb"
+    return out_path.with_name(f".{out_path.stem}.tmp{suffix}")
+
+
+def replace_database(temp_path: Path, out_path: Path) -> None:
+    temp_path.replace(out_path)
+    cleanup_wal_file(out_path)
+
+
+def cleanup_database_files(path: Path) -> None:
+    if path.exists():
+        path.unlink()
+    cleanup_wal_file(path)
+
+
+def cleanup_wal_file(path: Path) -> None:
+    wal_path = path.with_suffix(path.suffix + ".wal")
+    if wal_path.exists():
+        wal_path.unlink()
