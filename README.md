@@ -116,6 +116,7 @@ The adapter preserves session id, usage metadata, structured output, messages, t
 - `trace2eval inspect --input TRACE_OR_DIR --failures .trace2eval/reports/failures.jsonl`: print a normalized timeline with detector markers.
 - `trace2eval validate --examples examples/traces`: run the negative health check: failed examples normalize, mine, generate evals, and fail source replay as expected.
 - `trace2eval validate --examples examples/traces --positive examples/traces/passing_read_test_then_edit.json`: additionally verify matching passing traces do not overfire.
+- `trace2eval benchmark --fixtures examples/real_runs`: score curated real-run fixture notes against detected primary failure types.
 - `trace2eval report --traces .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl`: print a Rich terminal report.
 
 ## Generated Eval Format
@@ -162,6 +163,24 @@ The repository includes sanitized realistic adapter fixtures:
 - `examples/fixtures/claude-headless/no-verification.json`
 
 Use them to inspect adapter behavior before pointing Trace2Eval at private local traces.
+
+## Real-Run Benchmark Notes
+
+Curated real-run fixtures live under `examples/real_runs/`. Each case contains a short `NOTE.md` and `case.yaml` with:
+
+- original task
+- agent used
+- expected failure type
+- what Trace2Eval detected
+- whether the generated eval was useful
+
+Run:
+
+```powershell
+uv run trace2eval benchmark --fixtures examples/real_runs
+```
+
+The current checked-in cases are sanitized seed examples. The next useful data step is replacing or extending them with 5-10 actual Codex CLI and Claude Code sessions from small repositories.
 
 ## Failure Detector Taxonomy
 

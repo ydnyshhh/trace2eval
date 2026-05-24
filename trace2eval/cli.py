@@ -13,6 +13,7 @@ from trace2eval.adapters import (
     CodexJSONLAdapter,
     GenericJSONAdapter,
 )
+from trace2eval.benchmark import run_benchmark
 from trace2eval.capture import (
     build_claude_settings_snippet,
     discover_codex_rollouts,
@@ -227,6 +228,36 @@ def validate_command(
     if not raw_traces or not failures or not evals or not results or failed_as_expected != len(results):
         raise typer.Exit(1)
     if positive and (not positive_results or any(not result.passed for result in positive_results)):
+        raise typer.Exit(1)
+
+
+@app.command("benchmark")
+def benchmark_command(
+    fixtures: Annotated[Path, typer.Option("--fixtures", help="Directory containing benchmark case YAML notes.")] = Path("examples/real_runs"),
+    json_out: Annotated[Path | None, typer.Option("--json-out", help="Optional JSON output path for benchmark results.")] = None,
+) -> None:
+    results = run_benchmark(fixtures)
+    table = Table(title="Trace2Eval Real-Run Benchmark")
+    table.add_column("Case")
+    table.add_column("Agent")
+    table.add_column("Expected")
+    table.add_column("Primary Detected")
+    table.add_column("Match")
+    for result in results:
+        table.add_row(
+            result["case_id"],
+            result.get("agent_used") or "",
+            result["expected_failure_type"],
+            result.get("primary_detected_failure_type") or "none",
+            "yes" if result["matched"] else "no",
+        )
+    console.print(table)
+    matched = sum(1 for result in results if result["matched"])
+    console.print(f"Benchmark accuracy: {matched}/{len(results)}")
+    if json_out:
+        write_json(json_out, results)
+        console.print(f"Wrote benchmark JSON to {json_out}")
+    if not results or matched != len(results):
         raise typer.Exit(1)
 
 

@@ -1,0 +1,11 @@
+schema_version: 0.1.0
+case_id: claude-no-verification
+trace_path: ../../fixtures/claude-headless/no-verification.json
+adapter: claude-headless
+original_task: Fix cache key normalization for package names.
+agent_used: Claude Code headless
+expected_failure_type: no_verification
+expected_primary: true
+detected_failure_type: no_verification
+generated_eval_useful: true
+notes: The agent read the relevant test and edited source but stopped without running tests.

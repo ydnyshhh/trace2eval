@@ -1,0 +1,11 @@
+schema_version: 0.1.0
+case_id: codex-premature-edit
+trace_path: ../../fixtures/codex/rollout-premature-edit.jsonl
+adapter: codex
+original_task: Fix the parser regression without changing tests.
+agent_used: Codex CLI
+expected_failure_type: premature_edit
+expected_primary: true
+detected_failure_type: premature_edit
+generated_eval_useful: true
+notes: The agent searched and read source, then edited before reading the mentioned parser test.

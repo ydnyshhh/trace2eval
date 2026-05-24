@@ -204,3 +204,18 @@ class Report(Trace2EvalModel):
     generated_eval_count: int = 0
     examples: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class BenchmarkCase(Trace2EvalModel):
+    schema_version: str = SCHEMA_VERSION
+    case_id: str
+    trace_path: str
+    adapter: str = "generic"
+    original_task: str | None = None
+    agent_used: str | None = None
+    expected_failure_type: str
+    expected_primary: bool = True
+    detected_failure_type: str | None = None
+    generated_eval_useful: bool | None = None
+    notes: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
