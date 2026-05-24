@@ -1,0 +1,42 @@
+{
+  "session_id": "fixture-claude-headless-no-verification",
+  "model": "claude-code-example",
+  "status": "completed",
+  "usage": {
+    "input_tokens": 1200,
+    "output_tokens": 400
+  },
+  "messages": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": "Fix cache key normalization for package names."
+    },
+    {
+      "type": "tool_use",
+      "name": "Read",
+      "input": {
+        "file_path": "tests/test_cache.py"
+      },
+      "result": "def test_normalizes_package_case(): assert key_for('Requests') == key_for('requests')"
+    },
+    {
+      "type": "tool_use",
+      "name": "Edit",
+      "input": {
+        "file_path": "src/cache.py",
+        "old_string": "return name.strip()",
+        "new_string": "return name.strip().lower()"
+      },
+      "result": "updated"
+    },
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": "Implemented the fix."
+    }
+  ],
+  "structured_output": {
+    "summary": "Edited src/cache.py but did not run tests."
+  }
+}

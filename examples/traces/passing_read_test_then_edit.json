@@ -1,0 +1,109 @@
+{
+  "schema_version": "0.1.0",
+  "trace_id": "example-passing-read-test-then-edit",
+  "source": "generic_json",
+  "task": {
+    "task_id": "bug-parse-date",
+    "description": "Fix the date parser so it rejects impossible calendar dates.",
+    "repo_path": "/tmp/datebug",
+    "prompt": "Fix the date parser so it rejects impossible calendar dates."
+  },
+  "agent": {
+    "agent_name": "generic_agent"
+  },
+  "outcome": {
+    "success": true,
+    "tests_passed": true
+  },
+  "steps": [
+    {
+      "step_id": 0,
+      "event_type": "message",
+      "role": "user",
+      "content": "Fix the date parser so it rejects impossible calendar dates.",
+      "metadata": {
+        "raw_event": {
+          "role": "user",
+          "content": "Fix the date parser so it rejects impossible calendar dates."
+        }
+      }
+    },
+    {
+      "step_id": 1,
+      "event_type": "tool_call",
+      "tool_name": "shell",
+      "command": "rg \"parse_date|invalid date\" .",
+      "observation": "src/parser.py:def parse_date(value):\ntests/test_parser.py:def test_rejects_february_31():",
+      "metadata": {
+        "raw_event": {
+          "command": "rg \"parse_date|invalid date\" ."
+        }
+      }
+    },
+    {
+      "step_id": 2,
+      "event_type": "tool_call",
+      "tool_name": "shell",
+      "command": "cat tests/test_parser.py",
+      "observation": "def test_rejects_february_31():\n    with pytest.raises(ValueError): parse_date('2024-02-31')",
+      "metadata": {
+        "raw_event": {
+          "command": "cat tests/test_parser.py"
+        }
+      }
+    },
+    {
+      "step_id": 3,
+      "event_type": "tool_call",
+      "tool_name": "shell",
+      "command": "sed -n '1,160p' src/parser.py",
+      "observation": "def parse_date(value):\n    return datetime.strptime(value, '%Y-%m-%d')",
+      "metadata": {
+        "raw_event": {
+          "command": "sed -n '1,160p' src/parser.py"
+        }
+      }
+    },
+    {
+      "step_id": 4,
+      "event_type": "apply_patch",
+      "tool_name": "apply_patch",
+      "file_path": "src/parser.py",
+      "diff": "*** Begin Patch\n*** Update File: src/parser.py\n@@\n-    return datetime.strptime(value, '%Y-%m-%d')\n+    parsed = datetime.strptime(value, '%Y-%m-%d')\n+    if parsed.strftime('%Y-%m-%d') != value:\n+        raise ValueError(value)\n+    return parsed\n*** End Patch",
+      "metadata": {
+        "raw_event": {
+          "file_path": "src/parser.py"
+        }
+      }
+    },
+    {
+      "step_id": 5,
+      "event_type": "tool_call",
+      "tool_name": "shell",
+      "command": "pytest tests/test_parser.py",
+      "exit_code": 0,
+      "observation": "1 passed",
+      "metadata": {
+        "raw_event": {
+          "command": "pytest tests/test_parser.py",
+          "exit_code": 0
+        }
+      }
+    },
+    {
+      "step_id": 6,
+      "event_type": "final",
+      "role": "assistant",
+      "content": "Done.",
+      "metadata": {
+        "raw_event": {
+          "type": "final"
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "example": true,
+    "positive_fixture": true
+  }
+}

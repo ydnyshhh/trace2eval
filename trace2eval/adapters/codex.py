@@ -43,7 +43,11 @@ class CodexJSONLAdapter:
         events = read_jsonl_events(path)
         session_id = first_found(events, extract_session_id)
         trace_id = trace_id_for_file(path, session_id)
-        steps = [self._event_to_step(index, event, path) for index, event in enumerate(events)]
+        related_calls = build_tool_call_index(events)
+        steps = [
+            self._event_to_step(index, event, path, related_calls.get(str(event.get("tool_call_id") or event.get("call_id") or "")))
+            for index, event in enumerate(events)
+        ]
         prompt = first_user_prompt(steps)
         outcome = infer_outcome(events)
         agent = infer_agent(events)
@@ -57,22 +61,30 @@ class CodexJSONLAdapter:
             metadata={"source_file": str(path), "session_id": session_id, "event_count": len(events)},
         )
 
-    def _event_to_step(self, index: int, event: dict[str, Any], path: Path) -> RawStep:
+    def _event_to_step(self, index: int, event: dict[str, Any], path: Path, related_call: dict[str, Any] | None = None) -> RawStep:
+        related_call = related_call or {}
+        event_type = extract_event_type(event)
+        is_result = "result" in (event_type or "").lower()
+        should_copy_action = not is_result or extract_exit_code(event) is not None or (extract_status(event) or "").lower() in {
+            "failed",
+            "failure",
+            "error",
+        }
         return RawStep(
             step_id=index,
             timestamp=extract_timestamp(event),
-            event_type=extract_event_type(event),
+            event_type=event_type,
             role=extract_role(event),
             content=extract_content(event),
-            tool_name=extract_tool_name(event),
-            tool_args=extract_tool_args(event),
-            command=extract_command(event),
+            tool_name=extract_tool_name(event) or (extract_tool_name(related_call) if should_copy_action else None),
+            tool_args=extract_tool_args(event) or extract_tool_args(related_call),
+            command=extract_command(event) or (extract_command(related_call) if should_copy_action else None),
             observation=extract_observation(event),
-            file_path=extract_file_path(event),
-            diff=extract_diff(event),
+            file_path=extract_file_path(event) or (extract_file_path(related_call) if should_copy_action else None),
+            diff=extract_diff(event) or (extract_diff(related_call) if not is_result else None),
             exit_code=extract_exit_code(event),
             status=extract_status(event),
-            metadata={"raw_event": event, "source_file": str(path), "line_no": index + 1},
+            metadata={"raw_event": event, "related_tool_call": related_call or None, "source_file": str(path), "line_no": index + 1},
         )
 
 
@@ -82,6 +94,18 @@ def first_found(events: list[dict[str, Any]], extractor: Any) -> str | None:
         if value:
             return value
     return None
+
+
+def build_tool_call_index(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    calls: dict[str, dict[str, Any]] = {}
+    for event in events:
+        event_type = (extract_event_type(event) or "").lower()
+        if "result" in event_type:
+            continue
+        call_id = event.get("id") or event.get("call_id") or event.get("tool_call_id")
+        if call_id is not None and (extract_tool_name(event) or extract_command(event) or extract_diff(event)):
+            calls[str(call_id)] = event
+    return calls
 
 
 def first_user_prompt(steps: list[RawStep]) -> str | None:

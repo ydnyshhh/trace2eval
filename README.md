@@ -114,7 +114,8 @@ The adapter preserves session id, usage metadata, structured output, messages, t
 - `trace2eval generate --traces .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl --out .trace2eval/evals`: generate EvalCase YAML.
 - `trace2eval run --evals .trace2eval/evals --traces .trace2eval/normalized --mode source|task|suite --out .trace2eval/reports/eval_results.jsonl`: replay evals against their source trace, matching task traces, or a full suite.
 - `trace2eval inspect --input TRACE_OR_DIR --failures .trace2eval/reports/failures.jsonl`: print a normalized timeline with detector markers.
-- `trace2eval validate --examples examples/traces`: run the in-memory health check: example trace to normalize to mine to generate to run.
+- `trace2eval validate --examples examples/traces`: run the negative health check: failed examples normalize, mine, generate evals, and fail source replay as expected.
+- `trace2eval validate --examples examples/traces --positive examples/traces/passing_read_test_then_edit.json`: additionally verify matching passing traces do not overfire.
 - `trace2eval report --traces .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl`: print a Rich terminal report.
 
 ## Generated Eval Format
@@ -156,6 +157,9 @@ The repository includes sanitized realistic adapter fixtures:
 
 - `examples/realistic/codex/rollout-sanitized-example.jsonl`
 - `examples/realistic/claude_hooks/events-sanitized-example.jsonl`
+- `examples/fixtures/codex/rollout-premature-edit.jsonl`
+- `examples/fixtures/claude-hooks/events-premature-edit.jsonl`
+- `examples/fixtures/claude-headless/no-verification.json`
 
 Use them to inspect adapter behavior before pointing Trace2Eval at private local traces.
 

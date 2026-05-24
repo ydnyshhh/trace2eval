@@ -202,6 +202,11 @@ def extract_tool_name(event: JSON) -> str | None:
     )
     if value:
         return value
+    event_type = as_text(event.get("type") or event.get("event") or event.get("kind") or event.get("event_name")) or ""
+    if isinstance(event.get("name"), str) and (
+        "tool" in event_type.lower() or any(key in event for key in ("input", "arguments", "args", "result", "output"))
+    ):
+        return event["name"]
     if has_any(event, ("tool_input", "tool_response", "tool_result", "toolUse", "tool_call")):
         name = event.get("name")
         if isinstance(name, str):

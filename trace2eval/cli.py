@@ -203,6 +203,7 @@ def inspect_command(
 @app.command("validate")
 def validate_command(
     examples: Annotated[Path, typer.Option("--examples", help="Canonical example RawTrace directory.")] = Path("examples/traces"),
+    positive: Annotated[Path | None, typer.Option("--positive", help="Optional passing RawTrace fixture file/directory that should pass matching generated evals.")] = None,
 ) -> None:
     raw_traces = GenericJSONAdapter().ingest(examples)
     normalized = [normalize_trace(trace) for trace in raw_traces]
@@ -212,11 +213,20 @@ def validate_command(
     evals = generate_eval_cases(normalized, failures)
     results = run_evals(evals, normalized, mode="source")
     failed_as_expected = sum(1 for result in results if not result.passed)
+    positive_results = []
+    if positive:
+        positive_traces = [normalize_trace(trace) for trace in GenericJSONAdapter().ingest(positive)]
+        positive_results = run_evals(evals, positive_traces, mode="task")
     console.print(
         f"Validation: {len(raw_traces)} traces, {len(failures)} hypotheses, "
         f"{len(evals)} evals, {len(results)} source replay(s), {failed_as_expected} failed as expected."
     )
+    if positive:
+        passed_positive = sum(1 for result in positive_results if result.passed)
+        console.print(f"Positive validation: {passed_positive}/{len(positive_results)} matching replay(s) passed.")
     if not raw_traces or not failures or not evals or not results or failed_as_expected != len(results):
+        raise typer.Exit(1)
+    if positive and (not positive_results or any(not result.passed for result in positive_results)):
         raise typer.Exit(1)
 
 

@@ -16,10 +16,13 @@ READ_TOOLS = {
 }
 SEARCH_TOOLS = {"grep", "rg", "ripgrep", "search_repo", "find", "ls", "tree", "glob", "git_grep"}
 EDIT_TOOLS = {
+    "edit",
     "edit_file",
     "apply_patch",
+    "write",
     "write_file",
     "replace",
+    "create",
     "create_file",
     "patch",
     "str_replace",
