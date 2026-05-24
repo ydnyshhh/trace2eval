@@ -81,3 +81,14 @@ def test_index_and_query_commands_run_duckdb_smoke(tmp_path) -> None:
 
     assert query_result.exit_code == 0
     assert "Top Failures" in query_result.output
+
+
+def test_query_missing_duckdb_prints_helpful_error(tmp_path) -> None:
+    result = runner.invoke(
+        app,
+        ["query", "--db", str(tmp_path / "missing.duckdb"), "--top-failures"],
+    )
+
+    assert result.exit_code != 0
+    assert "DuckDB index not found" in result.output
+    assert "trace2eval index" in result.output

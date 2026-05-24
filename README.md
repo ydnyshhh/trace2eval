@@ -142,10 +142,17 @@ uv run trace2eval index `
   --out .trace2eval/trace2eval.duckdb
 ```
 
+Use `.trace2eval/normalized` as the primary `--traces` input. RawTrace JSON files are accepted as a convenience and normalized in memory during indexing, but `index` does not replace the `normalize` step in the normal pipeline.
+
 Run common queries:
 
 ```powershell
 uv run trace2eval query --db .trace2eval/trace2eval.duckdb --top-failures
+uv run trace2eval query --db .trace2eval/trace2eval.duckdb --eval-results
+uv run trace2eval query --db .trace2eval/trace2eval.duckdb --failure-recurrence
+uv run trace2eval query --db .trace2eval/trace2eval.duckdb --failure-onsets
+uv run trace2eval query --db .trace2eval/trace2eval.duckdb --action-mix
+uv run trace2eval query --db .trace2eval/trace2eval.duckdb --error-summary
 uv run trace2eval query --db .trace2eval/trace2eval.duckdb --by-source
 uv run trace2eval query --db .trace2eval/trace2eval.duckdb --by-agent
 uv run trace2eval query --db .trace2eval/trace2eval.duckdb --trace TRACE_ID

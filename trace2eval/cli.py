@@ -40,8 +40,13 @@ from trace2eval.runner import run_evals
 from trace2eval.storage.duckdb_store import (
     IndexSummary,
     build_duckdb_index,
+    query_action_mix,
     query_by_agent,
     query_by_source,
+    query_error_summary,
+    query_eval_results,
+    query_failure_onsets,
+    query_failure_recurrence,
     query_failure_type,
     query_top_failures,
     query_trace,
@@ -301,6 +306,11 @@ def index_command(
 def query_command(
     db_path: Annotated[Path, typer.Option("--db", help="DuckDB index path.")] = Path(".trace2eval/trace2eval.duckdb"),
     top_failures: Annotated[bool, typer.Option("--top-failures", help="Show failure counts and average scores.")] = False,
+    eval_results: Annotated[bool, typer.Option("--eval-results", help="Show eval recurrence by failure type.")] = False,
+    failure_recurrence: Annotated[bool, typer.Option("--failure-recurrence", help="Show failed/passed eval runs by failure type.")] = False,
+    failure_onsets: Annotated[bool, typer.Option("--failure-onsets", help="Show failure onset action/phase distribution.")] = False,
+    action_mix: Annotated[bool, typer.Option("--action-mix", help="Show action/error percentages by source and agent.")] = False,
+    error_summary: Annotated[bool, typer.Option("--error-summary", help="Show trace-level error and failure counts.")] = False,
     by_source: Annotated[bool, typer.Option("--by-source", help="Group traces, failures, and evals by source.")] = False,
     by_agent: Annotated[bool, typer.Option("--by-agent", help="Group traces and failures by agent/model.")] = False,
     trace_id: Annotated[str | None, typer.Option("--trace", help="Show one trace timeline and failures.")] = None,
@@ -311,7 +321,21 @@ def query_command(
         console.print("Run: trace2eval index --traces .trace2eval/normalized --out .trace2eval/trace2eval.duckdb")
         raise typer.Exit(1)
 
-    selected = sum(bool(item) for item in (top_failures, by_source, by_agent, trace_id, failure_type))
+    selected = sum(
+        bool(item)
+        for item in (
+            top_failures,
+            eval_results,
+            failure_recurrence,
+            failure_onsets,
+            action_mix,
+            error_summary,
+            by_source,
+            by_agent,
+            trace_id,
+            failure_type,
+        )
+    )
     if selected == 0:
         print_query_help()
         return
@@ -325,6 +349,36 @@ def query_command(
         print_rows("Top Failures", rows, ("failure_type", "count", "average_confidence", "average_severity"))
         if not rows:
             console.print("[yellow]No failures indexed. Re-run index with --failures to populate this query.[/yellow]")
+    elif eval_results:
+        print_rows(
+            "Eval Results",
+            query_eval_results(db_path),
+            ("failure_type", "eval_count", "failed_runs", "passed_runs", "failure_recurrence_rate"),
+        )
+    elif failure_recurrence:
+        print_rows(
+            "Failure Recurrence",
+            query_failure_recurrence(db_path),
+            ("failure_type", "eval_count", "failed_runs", "passed_runs", "failure_recurrence_rate"),
+        )
+    elif failure_onsets:
+        print_rows(
+            "Failure Onsets",
+            query_failure_onsets(db_path),
+            ("failure_type", "onset_action_type", "onset_phase", "count", "avg_confidence"),
+        )
+    elif action_mix:
+        print_rows(
+            "Action Mix",
+            query_action_mix(db_path),
+            ("source", "agent_name", "read_percent", "search_percent", "edit_percent", "verify_percent", "error_percent"),
+        )
+    elif error_summary:
+        print_rows(
+            "Error Summary",
+            query_error_summary(db_path),
+            ("trace_id", "error_steps", "verify_errors", "final_success", "failure_count"),
+        )
     elif by_source:
         print_rows("By Source", query_by_source(db_path), ("source", "trace_count", "failure_count", "eval_count"))
     elif by_agent:
@@ -426,6 +480,11 @@ def print_index_summary(summary: IndexSummary) -> None:
 def print_query_help() -> None:
     console.print("[bold]Available query modes[/bold]")
     console.print("  --top-failures")
+    console.print("  --eval-results")
+    console.print("  --failure-recurrence")
+    console.print("  --failure-onsets")
+    console.print("  --action-mix")
+    console.print("  --error-summary")
     console.print("  --by-source")
     console.print("  --by-agent")
     console.print("  --trace TRACE_ID")
@@ -435,7 +494,21 @@ def print_query_help() -> None:
 def print_rows(title: str, rows: list[dict], columns: tuple[str, ...]) -> None:
     table = Table(title=title)
     for column in columns:
-        justify = "right" if column in {"count", "trace_count", "failure_count", "eval_count"} else "left"
+        justify = (
+            "right"
+            if column
+            in {
+                "count",
+                "trace_count",
+                "failure_count",
+                "eval_count",
+                "failed_runs",
+                "passed_runs",
+                "error_steps",
+                "verify_errors",
+            }
+            else "left"
+        )
         table.add_column(column, justify=justify)
     if not rows:
         table.add_row(*(["none"] + [""] * (len(columns) - 1)))
@@ -462,16 +535,17 @@ def print_trace_query_result(trace: dict, steps: list[dict], failures: list[dict
     console.print(trace_table)
 
     step_table = Table(title="Steps")
-    for column in ("step_id", "action_type", "phase", "target", "command", "is_error"):
+    for column in ("step_id", "phase", "action_type", "target / command", "is_error", "error_signature"):
         step_table.add_column(column)
     for step in steps:
+        target_or_command = step.get("command") or step.get("target") or ""
         step_table.add_row(
             format_cell(step.get("step_id")),
-            format_cell(step.get("action_type")),
             format_cell(step.get("phase")),
-            truncate_cell(step.get("target")),
-            truncate_cell(step.get("command")),
+            format_cell(step.get("action_type")),
+            truncate_cell(target_or_command),
             format_cell(step.get("is_error")),
+            truncate_cell(step.get("error_signature")),
         )
     console.print(step_table)
 

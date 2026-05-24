@@ -10,8 +10,13 @@ from trace2eval.normalize import normalize_trace
 from trace2eval.runner import run_evals
 from trace2eval.storage.duckdb_store import (
     build_duckdb_index,
+    query_action_mix,
     query_by_agent,
     query_by_source,
+    query_error_summary,
+    query_eval_results,
+    query_failure_onsets,
+    query_failure_recurrence,
     query_failure_type,
     query_top_failures,
     query_trace,
@@ -65,6 +70,19 @@ def test_duckdb_index_builds_from_example_artifacts(tmp_path: Path) -> None:
     assert metadata["trace2eval_version"]
 
 
+def test_duckdb_index_is_idempotent(tmp_path: Path) -> None:
+    paths = write_example_artifacts(tmp_path)
+
+    first = build_duckdb_index(paths["traces"], paths["failures"], paths["evals"], paths["runs"], paths["db"])
+    second = build_duckdb_index(paths["traces"], paths["failures"], paths["evals"], paths["runs"], paths["db"])
+
+    assert first.traces == second.traces
+    assert first.steps == second.steps
+    assert first.failures == second.failures
+    assert first.evals == second.evals
+    assert first.runs == second.runs
+
+
 def test_duckdb_query_top_failures(tmp_path: Path) -> None:
     paths = write_example_artifacts(tmp_path)
     build_duckdb_index(paths["traces"], paths["failures"], paths["evals"], paths["runs"], paths["db"])
@@ -102,6 +120,27 @@ def test_duckdb_query_by_source_and_agent(tmp_path: Path) -> None:
     assert sum(row["eval_count"] for row in by_source) > 0
     assert by_agent
     assert sum(row["trace_count"] for row in by_agent) == 4
+
+
+def test_duckdb_trace2eval_specific_queries(tmp_path: Path) -> None:
+    paths = write_example_artifacts(tmp_path)
+    build_duckdb_index(paths["traces"], paths["failures"], paths["evals"], paths["runs"], paths["db"])
+
+    recurrence = query_failure_recurrence(paths["db"])
+    eval_results = query_eval_results(paths["db"])
+    onsets = query_failure_onsets(paths["db"])
+    action_mix = query_action_mix(paths["db"])
+    error_summary = query_error_summary(paths["db"])
+
+    premature = next(row for row in recurrence if row["failure_type"] == "premature_edit")
+    assert premature["eval_count"] >= 1
+    assert premature["failed_runs"] >= 1
+    assert premature["failure_recurrence_rate"] > 0
+    assert eval_results == recurrence
+    assert any(row["failure_type"] == "premature_edit" and row["onset_action_type"] == "EDIT" for row in onsets)
+    assert action_mix
+    assert all("error_percent" in row for row in action_mix)
+    assert any(row["error_steps"] > 0 for row in error_summary)
 
 
 def test_duckdb_index_handles_missing_optional_paths(tmp_path: Path) -> None:

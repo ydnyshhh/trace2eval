@@ -212,6 +212,107 @@ def query_failure_type(db_path: Path, failure_type: str) -> list[dict[str, Any]]
         )
 
 
+def query_eval_results(db_path: Path) -> list[dict[str, Any]]:
+    return query_failure_recurrence(db_path)
+
+
+def query_failure_recurrence(db_path: Path) -> list[dict[str, Any]]:
+    with duckdb.connect(str(db_path), read_only=True) as connection:
+        return rows_to_dicts(
+            connection.execute(
+                """
+                SELECT
+                  e.failure_type,
+                  COUNT(DISTINCT e.eval_id)::INTEGER AS eval_count,
+                  COALESCE(SUM(CASE WHEN r.passed = FALSE THEN 1 ELSE 0 END), 0)::INTEGER AS failed_runs,
+                  COALESCE(SUM(CASE WHEN r.passed = TRUE THEN 1 ELSE 0 END), 0)::INTEGER AS passed_runs,
+                  CASE
+                    WHEN COUNT(r.eval_id) = 0 THEN 0.0
+                    ELSE COALESCE(SUM(CASE WHEN r.passed = FALSE THEN 1 ELSE 0 END), 0)::DOUBLE / COUNT(r.eval_id)
+                  END AS failure_recurrence_rate
+                FROM evals e
+                LEFT JOIN runs r ON e.eval_id = r.eval_id
+                GROUP BY e.failure_type
+                ORDER BY failure_recurrence_rate DESC, failed_runs DESC, e.failure_type
+                """
+            )
+        )
+
+
+def query_failure_onsets(db_path: Path) -> list[dict[str, Any]]:
+    with duckdb.connect(str(db_path), read_only=True) as connection:
+        return rows_to_dicts(
+            connection.execute(
+                """
+                SELECT
+                  f.failure_type,
+                  COALESCE(s.action_type, '') AS onset_action_type,
+                  COALESCE(s.phase, '') AS onset_phase,
+                  COUNT(*)::INTEGER AS count,
+                  AVG(f.confidence) AS avg_confidence
+                FROM failures f
+                LEFT JOIN steps s ON f.trace_id = s.trace_id AND f.onset_step_id = s.step_id
+                GROUP BY f.failure_type, s.action_type, s.phase
+                ORDER BY count DESC, f.failure_type, onset_action_type, onset_phase
+                """
+            )
+        )
+
+
+def query_action_mix(db_path: Path) -> list[dict[str, Any]]:
+    with duckdb.connect(str(db_path), read_only=True) as connection:
+        return rows_to_dicts(
+            connection.execute(
+                """
+                SELECT
+                  t.source,
+                  COALESCE(t.agent_name, '') AS agent_name,
+                  100.0 * SUM(CASE WHEN s.action_type = 'READ' THEN 1 ELSE 0 END) / COUNT(*) AS read_percent,
+                  100.0 * SUM(CASE WHEN s.action_type = 'SEARCH' THEN 1 ELSE 0 END) / COUNT(*) AS search_percent,
+                  100.0 * SUM(CASE WHEN s.action_type = 'EDIT' THEN 1 ELSE 0 END) / COUNT(*) AS edit_percent,
+                  100.0 * SUM(CASE WHEN s.action_type = 'VERIFY' THEN 1 ELSE 0 END) / COUNT(*) AS verify_percent,
+                  100.0 * SUM(CASE WHEN s.is_error THEN 1 ELSE 0 END) / COUNT(*) AS error_percent
+                FROM steps s
+                JOIN traces t ON s.trace_id = t.trace_id
+                GROUP BY t.source, t.agent_name
+                ORDER BY t.source, agent_name
+                """
+            )
+        )
+
+
+def query_error_summary(db_path: Path) -> list[dict[str, Any]]:
+    with duckdb.connect(str(db_path), read_only=True) as connection:
+        return rows_to_dicts(
+            connection.execute(
+                """
+                SELECT
+                  t.trace_id,
+                  COALESCE(e.error_steps, 0)::INTEGER AS error_steps,
+                  COALESCE(e.verify_errors, 0)::INTEGER AS verify_errors,
+                  t.outcome_success AS final_success,
+                  COALESCE(f.failure_count, 0)::INTEGER AS failure_count
+                FROM traces t
+                LEFT JOIN (
+                  SELECT
+                    trace_id,
+                    COUNT(*) AS error_steps,
+                    SUM(CASE WHEN action_type = 'VERIFY' THEN 1 ELSE 0 END) AS verify_errors
+                  FROM steps
+                  WHERE is_error = TRUE
+                  GROUP BY trace_id
+                ) e ON t.trace_id = e.trace_id
+                LEFT JOIN (
+                  SELECT trace_id, COUNT(*) AS failure_count
+                  FROM failures
+                  GROUP BY trace_id
+                ) f ON t.trace_id = f.trace_id
+                ORDER BY error_steps DESC, verify_errors DESC, t.trace_id
+                """
+            )
+        )
+
+
 def load_index_traces(path: Path) -> list[NormalizedTrace]:
     traces: list[NormalizedTrace] = []
     for file in iter_files(path, (".json",)):
