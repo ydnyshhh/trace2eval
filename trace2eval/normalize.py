@@ -55,6 +55,12 @@ ERROR_RE = re.compile(
     r"returned non-zero|return code [1-9]|exit status [1-9])",
     re.IGNORECASE,
 )
+BENIGN_ERROR_RE = re.compile(
+    r"(\b\d+\s+passed\b|\b0\s+failed\b|\b0\s+failures?\b|\bno\s+errors?\s+found\b|"
+    r"\bno\s+failures?\b|\bwithout\s+failure\b|\bpreviously\s+failed\b.*\bpasses?\b)",
+    re.IGNORECASE,
+)
+NONZERO_RESULT_RE = re.compile(r"\b[1-9]\d*\s+(?:failed|failures?|errors?)\b", re.IGNORECASE)
 
 
 VERIFY_COMMAND_RE = re.compile(
@@ -209,15 +215,21 @@ def is_source_path(path: str | None) -> bool:
 
 
 def detect_error(step: RawStep) -> tuple[bool, str | None]:
-    if step.exit_code is not None and step.exit_code != 0:
-        signature = first_error_line(step.observation or step.content) or f"exit_code={step.exit_code}"
-        return True, signature
+    if step.exit_code is not None:
+        if step.exit_code != 0:
+            signature = first_error_line(step.observation or step.content) or f"exit_code={step.exit_code}"
+            return True, signature
+        status = (step.status or "").lower()
+        if status not in {"failed", "failure", "error", "errored", "nonzero", "non-zero"}:
+            return False, None
     status = (step.status or "").lower()
     if status in {"failed", "failure", "error", "errored", "nonzero", "non-zero"}:
         return True, first_error_line(step.observation or step.content) or step.status
     text = "\n".join(part for part in (step.observation, step.content) if part)
     if ERROR_RE.search(text):
-        return True, first_error_line(text)
+        signature = first_error_line(text)
+        if signature:
+            return True, signature
     return False, None
 
 
@@ -226,9 +238,15 @@ def first_error_line(text: str | None) -> str | None:
         return None
     for line in text.splitlines():
         cleaned = line.strip()
+        if cleaned and is_benign_error_line(cleaned):
+            continue
         if cleaned and ERROR_RE.search(cleaned):
             return cleaned[:300]
     return None
+
+
+def is_benign_error_line(line: str) -> bool:
+    return bool(BENIGN_ERROR_RE.search(line) and not NONZERO_RESULT_RE.search(line))
 
 
 def looks_like_patch(text: str | None) -> bool:

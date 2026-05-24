@@ -36,7 +36,52 @@ def rank_hypotheses(trace: NormalizedTrace, hypotheses: list[FailureHypothesis])
         combined = (item.confidence * 0.45) + (item.severity * 0.35) + (early * 0.2) + state_bonus + final_penalty
         return (combined, item.confidence, item.severity, -position)
 
-    return sorted(hypotheses, key=score, reverse=True)
+    ranked = sorted(hypotheses, key=score, reverse=True)
+    annotate_causal_roles(trace, ranked)
+    return ranked
+
+
+def annotate_causal_roles(trace: NormalizedTrace, ranked: list[FailureHypothesis]) -> None:
+    if not ranked:
+        return
+    primary = ranked[0]
+    step_positions = {step.step_id: index for index, step in enumerate(trace.steps)}
+    primary_position = step_positions.get(primary.onset_step_id, 0)
+    primary.metadata["causal_role"] = "primary_root_cause"
+    primary.metadata["causal_explanation"] = "Highest-ranked early causal decision according to deterministic detector scores."
+    for hypothesis in ranked[1:]:
+        position = step_positions.get(hypothesis.onset_step_id, len(trace.steps))
+        if position == primary_position:
+            role = "supporting_symptom"
+            explanation = f"Overlaps with primary root cause {primary.failure_type} at the same onset."
+        elif position > primary_position:
+            role = "downstream_failure"
+            explanation = f"Occurs after primary root cause {primary.failure_type}."
+        else:
+            role = "supporting_symptom"
+            explanation = f"Precedes primary root cause {primary.failure_type} but ranked lower."
+        hypothesis.metadata["causal_role"] = role
+        hypothesis.metadata["primary_failure_type"] = primary.failure_type
+        hypothesis.metadata["causal_explanation"] = explanation
+
+
+def causal_hypothesis_report(trace: NormalizedTrace, hypotheses: list[FailureHypothesis]) -> dict:
+    ranked = rank_hypotheses(trace, hypotheses)
+    primary = ranked[0] if ranked else None
+    return {
+        "trace_id": trace.trace_id,
+        "primary_root_cause": primary.model_dump(mode="json", exclude_none=True) if primary else None,
+        "supporting_symptoms": [
+            item.model_dump(mode="json", exclude_none=True)
+            for item in ranked
+            if item.metadata.get("causal_role") == "supporting_symptom"
+        ],
+        "downstream_failures": [
+            item.model_dump(mode="json", exclude_none=True)
+            for item in ranked
+            if item.metadata.get("causal_role") == "downstream_failure"
+        ],
+    }
 
 
 def group_hypotheses_by_trace(hypotheses: list[FailureHypothesis]) -> dict[str, list[FailureHypothesis]]:

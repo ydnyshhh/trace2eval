@@ -185,7 +185,7 @@ def infer_success(root: dict[str, Any]) -> bool | None:
     if not status:
         return None
     low = status.lower()
-    if low in {"success", "succeeded", "passed", "complete", "completed"}:
+    if low in {"success", "succeeded", "passed"}:
         return True
     if low in {"failure", "failed", "error", "cancelled", "canceled"}:
         return False

@@ -141,7 +141,7 @@ def infer_outcome(events: list[dict[str, Any]]) -> OutcomeMetadata:
         status = nested_text(event, ("status",), ("outcome",), ("state",), ("result", "status"))
         if status and success is None:
             low = status.lower()
-            if low in {"success", "succeeded", "passed", "complete", "completed"}:
+            if low in {"success", "succeeded", "passed"}:
                 success = True
             elif low in {"failure", "failed", "error", "cancelled", "canceled"}:
                 success = False

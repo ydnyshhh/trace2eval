@@ -83,22 +83,36 @@ class NoVerificationDetector(FailureDetector):
         edits = [step for step in trace.steps if step.action_type == ActionType.EDIT]
         if not edits:
             return []
+        if trace.outcome.success is True or trace.outcome.tests_passed is True:
+            return []
         final_edit = edits[-1]
         after_final_edit = steps_after(trace.steps, final_edit)
         has_verify = any(step.action_type == ActionType.VERIFY for step in after_final_edit)
         if has_verify:
             return []
+        has_stop = any(step.action_type == ActionType.STOP for step in after_final_edit)
+        terminal_known_failed = trace.outcome.success is False or trace.outcome.tests_passed is False
+        confidence = 0.82 if has_stop else 0.7 if terminal_known_failed else 0.45
+        severity = 0.72 if has_stop or terminal_known_failed else 0.55
+        evidence = [
+            f"Last edit occurred at step {final_edit.step_id}.",
+            "The trace ended or submitted without a VERIFY action after that edit.",
+        ]
+        if not has_stop and not terminal_known_failed:
+            evidence.append("No explicit STOP or failed outcome was observed, so this may be a partial trace.")
         return [
             self.hypothesis(
                 trace,
                 final_edit,
-                severity=0.72,
-                confidence=0.82,
-                evidence=[
-                    f"Last edit occurred at step {final_edit.step_id}.",
-                    "The trace ended or submitted without a VERIFY action after that edit.",
-                ],
-                metadata={"edited_target": final_edit.target},
+                severity=severity,
+                confidence=confidence,
+                evidence=evidence,
+                metadata={
+                    "edited_target": final_edit.target,
+                    "terminal_observed": has_stop,
+                    "terminal_known_failed": terminal_known_failed,
+                    "partial_trace_possible": not has_stop and not terminal_known_failed,
+                },
             )
         ]
 

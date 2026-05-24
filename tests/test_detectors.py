@@ -46,6 +46,19 @@ def test_no_verification_detector() -> None:
     assert NoVerificationDetector().detect(trace)
 
 
+def test_no_verification_detector_lowers_confidence_for_partial_trace() -> None:
+    trace = normalize_trace(
+        trace_for(
+            RawStep(step_id=0, command="cat tests/test_bug.py"),
+            RawStep(step_id=1, file_path="src/bug.py", diff="--- a/src/bug.py\n+++ b/src/bug.py"),
+        )
+    )
+    findings = NoVerificationDetector().detect(trace)
+    assert findings
+    assert findings[0].confidence < 0.6
+    assert findings[0].metadata["partial_trace_possible"] is True
+
+
 def test_repeated_command_error_detector() -> None:
     trace = normalize_trace(
         trace_for(

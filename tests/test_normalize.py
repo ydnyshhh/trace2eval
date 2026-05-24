@@ -37,6 +37,29 @@ def test_error_detection() -> None:
     assert "ModuleNotFoundError" in signature
 
 
+def test_error_detection_ignores_benign_failure_words() -> None:
+    benign_outputs = [
+        "1 passed",
+        "12 passed, 0 failed",
+        "no errors found",
+        "0 failures",
+        "previously failed test now passes",
+        "completed without failure",
+    ]
+    for index, output in enumerate(benign_outputs):
+        is_error, signature = detect_error(RawStep(step_id=index, command="pytest", exit_code=0, observation=output))
+        assert not is_error
+        assert signature is None
+
+    is_error, signature = detect_error(RawStep(step_id=99, observation="0 failed"))
+    assert not is_error
+    assert signature is None
+
+    is_error, signature = detect_error(RawStep(step_id=100, observation="12 passed, 1 failed"))
+    assert is_error
+    assert signature == "12 passed, 1 failed"
+
+
 def test_phase_segmentation() -> None:
     raw = RawTrace(
         trace_id="phase",

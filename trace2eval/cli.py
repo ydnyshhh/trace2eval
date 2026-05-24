@@ -235,6 +235,7 @@ def validate_command(
 def benchmark_command(
     fixtures: Annotated[Path, typer.Option("--fixtures", help="Directory containing benchmark case YAML notes.")] = Path("examples/real_runs"),
     json_out: Annotated[Path | None, typer.Option("--json-out", help="Optional JSON output path for benchmark results.")] = None,
+    strict: Annotated[bool, typer.Option("--strict/--no-strict", help="Fail with a non-zero exit code when any benchmark case misses.")] = True,
 ) -> None:
     results = run_benchmark(fixtures)
     table = Table(title="Trace2Eval Real-Run Benchmark")
@@ -257,7 +258,7 @@ def benchmark_command(
     if json_out:
         write_json(json_out, results)
         console.print(f"Wrote benchmark JSON to {json_out}")
-    if not results or matched != len(results):
+    if strict and (not results or matched != len(results)):
         raise typer.Exit(1)
 
 

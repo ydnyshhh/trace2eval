@@ -22,3 +22,25 @@ def test_benchmark_command() -> None:
     result = CliRunner().invoke(app, ["benchmark", "--fixtures", "examples/real_runs"])
     assert result.exit_code == 0
     assert "Benchmark accuracy: 2/2" in result.output
+
+
+def test_benchmark_command_no_strict_reports_without_failing(tmp_path) -> None:
+    trace_path = Path("examples/fixtures/codex/rollout-premature-edit.jsonl").resolve().as_posix()
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    (case_dir / "case.yaml").write_text(
+        "\n".join(
+            [
+                "schema_version: 0.1.0",
+                "case_id: mismatch",
+                f"trace_path: {trace_path}",
+                "adapter: codex",
+                "expected_failure_type: no_verification",
+                "expected_primary: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(app, ["benchmark", "--fixtures", str(tmp_path), "--no-strict"])
+    assert result.exit_code == 0
+    assert "Benchmark accuracy: 0/1" in result.output

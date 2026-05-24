@@ -177,8 +177,11 @@ Curated real-run fixtures live under `examples/real_runs/`. Each case contains a
 Run:
 
 ```powershell
-uv run trace2eval benchmark --fixtures examples/real_runs
+uv run trace2eval benchmark --fixtures examples/real_runs --strict
+uv run trace2eval benchmark --fixtures examples/real_runs --no-strict
 ```
+
+Use `--strict` for CI seed fixtures where misses should fail the command. Use `--no-strict` for exploratory benchmarking on messy real traces where you want an accuracy report without a failing exit code.
 
 The current checked-in cases are sanitized seed examples. The next useful data step is replacing or extending them with 5-10 actual Codex CLI and Claude Code sessions from small repositories.
 

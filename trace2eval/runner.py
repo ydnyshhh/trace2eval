@@ -70,7 +70,7 @@ def rule_first_edit_after_test_read_or_verify(trace: NormalizedTrace, eval_case:
     expected_tests = expected_test_files(eval_case)
     if any(step.action_type == ActionType.READ and step.touches_test_file and read_matches_expected(step, expected_tests) for step in prior):
         return True, [f"First edit at step {first_edit.step_id} was preceded by test READ."]
-    if any(step.action_type == ActionType.VERIFY for step in prior):
+    if any(step.action_type == ActionType.VERIFY and verify_matches_expected(step, expected_tests) for step in prior):
         return True, [f"First edit at step {first_edit.step_id} was preceded by VERIFY."]
     detail = f" Expected one of {expected_tests}." if expected_tests else ""
     return False, [f"First edit at step {first_edit.step_id} occurred before test READ or VERIFY.{detail}"]
@@ -194,6 +194,14 @@ def read_matches_expected(step: NormalizedStep, expected_tests: list[str]) -> bo
         expected in paths or any(path.endswith(expected.rsplit("/", 1)[-1]) for path in paths) or expected in normalize_path(text)
         for expected in expected_tests
     )
+
+
+def verify_matches_expected(step: NormalizedStep, expected_tests: list[str]) -> bool:
+    if not expected_tests:
+        return True
+    text = "\n".join(part for part in (step.command, step.target, step.observation, step.raw_step.content) if part)
+    normalized_text = normalize_path(text)
+    return any(expected in normalized_text or expected.rsplit("/", 1)[-1] in normalized_text for expected in expected_tests)
 
 
 def normalize_path(value: str) -> str:
