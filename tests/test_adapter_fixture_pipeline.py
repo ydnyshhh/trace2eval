@@ -6,9 +6,11 @@ from trace2eval.adapters import (
     CodexJSONLAdapter,
     GenericJSONAdapter,
 )
+from trace2eval.adapters.common import extract_paths_from_text
 from trace2eval.detectors import (
     NoVerificationDetector,
     PrematureEditDetector,
+    RepeatedCommandErrorDetector,
     SubmitAfterFailureDetector,
     run_detectors,
 )
@@ -110,3 +112,48 @@ def test_generated_eval_passes_corrected_trace() -> None:
     corrected = normalize_trace(GenericJSONAdapter().ingest(Path("examples/traces/passing_read_test_then_edit.json"))[0])
     result = run_eval(eval_case, corrected)
     assert result.passed
+
+
+def test_codex_desktop_response_item_not_repeated_command_error() -> None:
+    raw = CodexJSONLAdapter().ingest(Path("examples/fixtures/codex/rollout-desktop-false-positive.jsonl"))[0]
+    trace = normalize_trace(raw)
+
+    assert not RepeatedCommandErrorDetector().detect(trace)
+
+
+def test_fake_dotted_identifiers_do_not_become_paths() -> None:
+    text = (
+        "False path-shaped prose: trace2eval.adapters.c re.c step.c normalized.rs\n"
+        "Real path with separators: trace2eval/adapters/common.py\n"
+        "command: pytest tests/test_parser.py"
+    )
+
+    paths = extract_paths_from_text(text)
+
+    assert "trace2eval.adapters.c" not in paths
+    assert "re.c" not in paths
+    assert "step.c" not in paths
+    assert "normalized.rs" not in paths
+    assert "trace2eval/adapters/common.py" in paths
+    assert "tests/test_parser.py" in paths
+
+
+def test_codex_desktop_code_output_is_not_patch_or_fake_edit() -> None:
+    raw = CodexJSONLAdapter().ingest(Path("examples/fixtures/codex/rollout-desktop-false-positive.jsonl"))[0]
+    trace = normalize_trace(raw)
+    code_output = next(step for step in trace.steps if step.observation and "trace2eval.adapters.c" in step.observation)
+
+    assert code_output.action_type != ActionType.EDIT
+    assert not code_output.is_patch
+    assert not code_output.is_error
+    assert "trace2eval.adapters.c" not in code_output.metadata["paths"]
+    assert "trace2eval/adapters/common.py" in code_output.metadata["paths"]
+
+
+def test_scaffold_test_authoring_not_primary_premature_edit() -> None:
+    raw = CodexJSONLAdapter().ingest(Path("examples/fixtures/codex/rollout-desktop-false-positive.jsonl"))[0]
+    trace = normalize_trace(raw)
+    ranked = rank_hypotheses(trace, run_detectors(trace))
+
+    assert "premature_edit" not in {finding.failure_type for finding in ranked}
+    assert not ranked or ranked[0].failure_type != "premature_edit"

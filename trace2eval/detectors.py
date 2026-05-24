@@ -45,6 +45,8 @@ class PrematureEditDetector(FailureDetector):
         first_edit = next((step for step in trace.steps if step.action_type == ActionType.EDIT), None)
         if not first_edit:
             return []
+        if task_is_scaffold_or_test_authoring(trace):
+            return []
         prior = steps_before(trace.steps, first_edit)
         had_test_read = any(step.action_type == ActionType.READ and step.touches_test_file for step in prior)
         had_verify = any(step.action_type == ActionType.VERIFY for step in prior)
@@ -123,7 +125,7 @@ class RepeatedCommandErrorDetector(FailureDetector):
     def detect(self, trace: NormalizedTrace) -> list[FailureHypothesis]:
         failing: dict[str, list[NormalizedStep]] = defaultdict(list)
         for step in trace.steps:
-            raw = step.command or step.raw_action
+            raw = repeated_error_identity(step)
             if not raw or not step.is_error:
                 continue
             failing[normalize_command(raw)].append(step)
@@ -371,6 +373,26 @@ def normalize_command(command: str) -> str:
     return normalized
 
 
+GENERIC_EVENT_IDENTITIES = {
+    "response_item",
+    "session_meta",
+    "event_msg",
+    "turn_context",
+    "message",
+    "assistant_message",
+    "tool_result",
+}
+
+
+def repeated_error_identity(step: NormalizedStep) -> str | None:
+    if step.command:
+        return step.command
+    tool_name = step.raw_step.tool_name
+    if tool_name and tool_name.lower() not in GENERIC_EVENT_IDENTITIES:
+        return tool_name
+    return None
+
+
 def canonical_edit_path(path: str | None) -> str | None:
     if not path:
         return None
@@ -422,8 +444,31 @@ def task_allows_test_updates(trace: NormalizedTrace) -> bool:
             "change the tests",
             "adjust tests",
             "test-only",
+            "add a failing test",
+            "add failing test",
+            "write a test",
+            "test-authoring",
         )
     )
+
+
+def task_is_scaffold_or_test_authoring(trace: NormalizedTrace) -> bool:
+    text = " ".join(part for part in (trace.task.description, trace.task.prompt) if part).lower()
+    phrases = (
+        "create a tiny toy",
+        "toy package",
+        "scaffold",
+        "add a failing test",
+        "add failing test",
+        "write tests",
+        "write a test",
+        "add tests",
+        "test-authoring",
+        "build a toy",
+        "create a package",
+        "create/add/build",
+    )
+    return any(phrase in text for phrase in phrases)
 
 
 def path_category(path: str) -> str:

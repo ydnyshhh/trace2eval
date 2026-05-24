@@ -57,7 +57,8 @@ ERROR_RE = re.compile(
 )
 BENIGN_ERROR_RE = re.compile(
     r"(\b\d+\s+passed\b|\b0\s+failed\b|\b0\s+failures?\b|\bno\s+errors?\s+found\b|"
-    r"\bno\s+failures?\b|\bwithout\s+failure\b|\bpreviously\s+failed\b.*\bpasses?\b)",
+    r"\bno\s+failures?\b|\bwithout\s+failure\b|\bpreviously\s+failed\b.*\bpasses?\b|"
+    r"\bexit code:\s*0\b|\bexit status\s+0\b|\breturn code\s+0\b)",
     re.IGNORECASE,
 )
 NONZERO_RESULT_RE = re.compile(r"\b[1-9]\d*\s+(?:failed|failures?|errors?)\b", re.IGNORECASE)
@@ -99,7 +100,7 @@ def map_step(step: RawStep) -> NormalizedStep:
     command = step.command
     observation = step.observation or step.content
     action_type = classify_action(step, paths)
-    is_patch = bool(step.diff) or looks_like_patch(step.content) or looks_like_patch(step.observation)
+    is_patch = bool(step.diff) or looks_like_patch(step.content)
     modifies_file = action_type == ActionType.EDIT or is_patch
     touches_test = any(is_test_path(path) for path in paths + ([target] if target else []))
     touches_source = any(is_source_path(path) for path in paths + ([target] if target else []))
@@ -127,7 +128,7 @@ def classify_action(step: RawStep, paths: list[str]) -> ActionType:
     tool = (step.tool_name or "").strip().lower()
     event = (step.event_type or "").strip().lower()
     command = step.command or ""
-    text = "\n".join(part for part in (step.content, step.observation, step.diff) if part)
+    patch_text = "\n".join(part for part in (step.content, step.diff) if part)
 
     if event in {"userpromptsubmit", "user_prompt_submit"} or (step.role or "").lower() == "user":
         return ActionType.PLAN
@@ -137,7 +138,7 @@ def classify_action(step: RawStep, paths: list[str]) -> ActionType:
         return ActionType.STOP
     if "ask" in event or looks_like_clarifying_question(step.content):
         return ActionType.ASK_USER
-    if step.diff or looks_like_patch(text):
+    if step.diff or looks_like_patch(patch_text):
         return ActionType.EDIT
     if command:
         return classify_command(command)
@@ -240,6 +241,8 @@ def first_error_line(text: str | None) -> str | None:
         cleaned = line.strip()
         if cleaned and is_benign_error_line(cleaned):
             continue
+        if cleaned and is_source_code_error_literal(cleaned):
+            continue
         if cleaned and ERROR_RE.search(cleaned):
             return cleaned[:300]
     return None
@@ -247,6 +250,17 @@ def first_error_line(text: str | None) -> str | None:
 
 def is_benign_error_line(line: str) -> bool:
     return bool(BENIGN_ERROR_RE.search(line) and not NONZERO_RESULT_RE.search(line))
+
+
+def is_source_code_error_literal(line: str) -> bool:
+    lowered = line.lower()
+    return (
+        "re.compile" in lowered
+        or "error_re" in lowered
+        or lowered.startswith("#")
+        or lowered.startswith(("if ", "elif ", "return ", "def ", "class ", "for ", "while "))
+        or bool(re.match(r"^(?:r|u|b|f|rb|br|fr|rf)[\"']", lowered))
+    )
 
 
 def looks_like_patch(text: str | None) -> bool:
