@@ -34,11 +34,13 @@ Trace2Eval requires Python 3.11 or newer and uses Pydantic, Typer, Rich, PyYAML,
 
 ```powershell
 uv run trace2eval init
+uv run trace2eval doctor
 uv run trace2eval ingest generic --path examples/traces --out .trace2eval/raw
 uv run trace2eval normalize --input .trace2eval/raw --out .trace2eval/normalized
 uv run trace2eval mine --input .trace2eval/normalized --out .trace2eval/reports/failures.jsonl
 uv run trace2eval generate --traces .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl --out .trace2eval/evals
 uv run trace2eval run --evals .trace2eval/evals --traces .trace2eval/normalized --mode source --out .trace2eval/reports/eval_results.jsonl
+uv run trace2eval replay --trace examples/traces/premature_edit_codex_like.json --failure premature_edit
 uv run trace2eval inspect --input .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl
 uv run trace2eval report --traces .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl
 ```
@@ -104,6 +106,7 @@ The adapter preserves session id, usage metadata, structured output, messages, t
 
 - `trace2eval init`: create `.trace2eval/raw`, `.trace2eval/normalized`, `.trace2eval/evals`, `.trace2eval/reports`, and `.trace2eval/hooks`.
 - `trace2eval init claude-code-hooks`: generate a Claude Code hook logger and settings snippet.
+- `trace2eval doctor`: check workspace folders, Codex rollouts, Claude hook install status, examples, benchmark cases, and Python dependencies.
 - `trace2eval capture codex-discover`: list discovered Codex rollout JSONL files.
 - `trace2eval ingest codex --path PATH --out .trace2eval/raw`: ingest Codex rollout JSONL.
 - `trace2eval ingest claude-hooks --path PATH --out .trace2eval/raw`: ingest Claude hook JSONL.
@@ -114,6 +117,7 @@ The adapter preserves session id, usage metadata, structured output, messages, t
 - `trace2eval generate --traces .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl --out .trace2eval/evals`: generate EvalCase YAML.
 - `trace2eval run --evals .trace2eval/evals --traces .trace2eval/normalized --mode source|task|suite --out .trace2eval/reports/eval_results.jsonl`: replay evals against their source trace, matching task traces, or a full suite.
 - `trace2eval inspect --input TRACE_OR_DIR --failures .trace2eval/reports/failures.jsonl`: print a normalized timeline with detector markers.
+- `trace2eval replay --trace TRACE --failure premature_edit`: print a compact failure story with task, key observations, first bad action, expected behavior, generated eval, and source replay result.
 - `trace2eval validate --examples examples/traces`: run the negative health check: failed examples normalize, mine, generate evals, and fail source replay as expected.
 - `trace2eval validate --examples examples/traces --positive examples/traces/passing_read_test_then_edit.json`: additionally verify matching passing traces do not overfire.
 - `trace2eval benchmark --fixtures examples/real_runs`: score curated real-run fixture notes against detected primary failure types.

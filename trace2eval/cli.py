@@ -19,6 +19,7 @@ from trace2eval.capture import (
     discover_codex_rollouts,
     install_claude_hook,
 )
+from trace2eval.doctor import run_doctor_checks
 from trace2eval.generation import generate_eval_cases
 from trace2eval.io import (
     ensure_dir,
@@ -33,6 +34,7 @@ from trace2eval.io import (
 )
 from trace2eval.mining import mine_trace, rank_hypotheses
 from trace2eval.normalize import normalize_trace
+from trace2eval.replay import build_replay, load_replay_trace, print_replay_story
 from trace2eval.report import build_report, print_terminal_report, print_trace_timeline
 from trace2eval.runner import run_evals
 
@@ -231,6 +233,43 @@ def validate_command(
         raise typer.Exit(1)
 
 
+@app.command("doctor")
+def doctor_command(
+    workspace: Annotated[Path, typer.Option("--workspace", help="Trace2Eval workspace directory.")] = Path(".trace2eval"),
+    examples: Annotated[Path, typer.Option("--examples", help="Example RawTrace directory to validate.")] = Path("examples/traces"),
+    benchmark_fixtures: Annotated[Path, typer.Option("--benchmark-fixtures", help="Real-run benchmark fixture directory.")] = Path("examples/real_runs"),
+    codex_home: Annotated[Path | None, typer.Option("--codex-home", help="Explicit Codex home directory.")] = None,
+    strict: Annotated[bool, typer.Option("--strict/--no-strict", help="Exit non-zero when a check fails.")] = False,
+) -> None:
+    checks = run_doctor_checks(
+        workspace=workspace,
+        examples=examples,
+        benchmark_fixtures=benchmark_fixtures,
+        codex_home=codex_home,
+    )
+    console.print("[bold]Trace2Eval Doctor[/bold]")
+    for item in checks:
+        console.print(f"{doctor_symbol(item['status'])} {item['message']}")
+    if strict and any(item["status"] == "fail" for item in checks):
+        raise typer.Exit(1)
+
+
+@app.command("replay")
+def replay_command(
+    trace_path: Annotated[Path, typer.Option("--trace", help="RawTrace or NormalizedTrace JSON file/directory.")],
+    failure: Annotated[str, typer.Option("--failure", help="Failure selector: primary, failure_type, step id, or type@step.")] = "primary",
+    failures_path: Annotated[Path | None, typer.Option("--failures", help="Optional failure hypotheses JSONL.")] = None,
+    trace_id: Annotated[str | None, typer.Option("--trace-id", help="Trace id when --trace points to a directory.")] = None,
+) -> None:
+    try:
+        trace = load_replay_trace(trace_path, trace_id)
+        selected_failure, eval_case, result = build_replay(trace, failure, failures_path)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    print_replay_story(trace, selected_failure, eval_case, result, console=console)
+
+
 @app.command("benchmark")
 def benchmark_command(
     fixtures: Annotated[Path, typer.Option("--fixtures", help="Directory containing benchmark case YAML notes.")] = Path("examples/real_runs"),
@@ -293,6 +332,14 @@ def load_any_normalized_traces(path: Path):
         return load_normalized_traces(path)
     except Exception:
         return [normalize_trace(trace) for trace in load_raw_traces(path)]
+
+
+def doctor_symbol(status: str) -> str:
+    if status == "ok":
+        return "[green]OK[/green]"
+    if status == "warn":
+        return "[yellow]WARN[/yellow]"
+    return "[red]FAIL[/red]"
 
 
 if __name__ == "__main__":
