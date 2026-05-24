@@ -1,0 +1,79 @@
+{
+  "schema_version": "0.1.0",
+  "trace_id": "example-no-verification",
+  "source": "claude_code_hooks",
+  "task": {
+    "task_id": "bug-cache-key",
+    "description": "Fix cache key normalization for package names.",
+    "repo_path": "/tmp/cachebug",
+    "prompt": "Fix cache key normalization for package names."
+  },
+  "agent": {
+    "agent_name": "claude_code"
+  },
+  "outcome": {
+    "success": false,
+    "failure_summary": "No validation was run after editing."
+  },
+  "steps": [
+    {
+      "step_id": 0,
+      "event_type": "UserPromptSubmit",
+      "role": "user",
+      "content": "Fix cache key normalization for package names.",
+      "metadata": {
+        "raw_hook_event": {
+          "event_name": "UserPromptSubmit",
+          "payload": {
+            "prompt": "Fix cache key normalization for package names."
+          }
+        }
+      }
+    },
+    {
+      "step_id": 1,
+      "event_type": "PostToolUse",
+      "tool_name": "Read",
+      "file_path": "tests/test_cache.py",
+      "observation": "def test_normalizes_package_case(): assert key_for('Requests') == key_for('requests')",
+      "metadata": {
+        "raw_hook_event": {
+          "event_name": "PostToolUse",
+          "tool_name": "Read",
+          "file_path": "tests/test_cache.py"
+        }
+      }
+    },
+    {
+      "step_id": 2,
+      "event_type": "PostToolUse",
+      "tool_name": "Edit",
+      "file_path": "src/cache.py",
+      "diff": "--- a/src/cache.py\n+++ b/src/cache.py\n@@\n-    return name.strip()\n+    return name.strip().lower()",
+      "metadata": {
+        "raw_hook_event": {
+          "event_name": "PostToolUse",
+          "tool_name": "Edit",
+          "file_path": "src/cache.py"
+        }
+      }
+    },
+    {
+      "step_id": 3,
+      "event_type": "Stop",
+      "role": "assistant",
+      "content": "Implemented the fix.",
+      "metadata": {
+        "raw_hook_event": {
+          "event_name": "Stop",
+          "payload": {
+            "message": "Implemented the fix."
+          }
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "example": true
+  }
+}

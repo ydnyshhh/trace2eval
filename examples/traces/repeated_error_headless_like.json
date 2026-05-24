@@ -1,0 +1,97 @@
+{
+  "schema_version": "0.1.0",
+  "trace_id": "example-repeated-error",
+  "source": "claude_code_headless",
+  "task": {
+    "task_id": "bug-cli-import",
+    "description": "Fix the CLI import path error.",
+    "repo_path": "/tmp/importbug",
+    "prompt": "Fix the CLI import path error."
+  },
+  "agent": {
+    "agent_name": "claude_code"
+  },
+  "outcome": {
+    "success": false,
+    "failure_summary": "Repeated the same failing command before changing strategy."
+  },
+  "steps": [
+    {
+      "step_id": 0,
+      "event_type": "message",
+      "role": "user",
+      "content": "Fix the CLI import path error.",
+      "metadata": {
+        "raw_event": {
+          "role": "user",
+          "content": "Fix the CLI import path error."
+        }
+      }
+    },
+    {
+      "step_id": 1,
+      "event_type": "tool_use",
+      "tool_name": "Bash",
+      "command": "python -m acme.cli --help",
+      "exit_code": 1,
+      "observation": "ModuleNotFoundError: No module named 'acme'",
+      "metadata": {
+        "raw_event": {
+          "type": "tool_use",
+          "name": "Bash",
+          "input": {
+            "command": "python -m acme.cli --help"
+          }
+        }
+      }
+    },
+    {
+      "step_id": 2,
+      "event_type": "tool_use",
+      "tool_name": "Bash",
+      "command": "python -m acme.cli --help",
+      "exit_code": 1,
+      "observation": "ModuleNotFoundError: No module named 'acme'",
+      "metadata": {
+        "raw_event": {
+          "type": "tool_use",
+          "name": "Bash",
+          "input": {
+            "command": "python -m acme.cli --help"
+          }
+        }
+      }
+    },
+    {
+      "step_id": 3,
+      "event_type": "tool_use",
+      "tool_name": "Read",
+      "file_path": "pyproject.toml",
+      "observation": "[project.scripts]\nacme = \"src.cli:main\"",
+      "metadata": {
+        "raw_event": {
+          "type": "tool_use",
+          "name": "Read",
+          "file_path": "pyproject.toml"
+        }
+      }
+    },
+    {
+      "step_id": 4,
+      "event_type": "tool_use",
+      "tool_name": "Edit",
+      "file_path": "src/cli.py",
+      "diff": "--- a/src/cli.py\n+++ b/src/cli.py\n@@\n-def main(): pass\n+def main(): print('ok')",
+      "metadata": {
+        "raw_event": {
+          "type": "tool_use",
+          "name": "Edit",
+          "file_path": "src/cli.py"
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "example": true
+  }
+}

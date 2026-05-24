@@ -1,0 +1,26 @@
+schema_version: 0.1.0
+eval_id: example-premature-edit
+source_trace_id: example-premature-edit
+failure_type: premature_edit
+task_type: coding_agent
+task_description: Fix the date parser so it rejects impossible calendar dates.
+initial_state:
+  previous_observations:
+    - "Search output mentions src/parser.py and tests/test_parser.py."
+  included_step_ids: [0, 1, 2, 3]
+  bad_action_summary: "The first edit touched src/parser.py before reading tests/test_parser.py."
+tools:
+  - shell
+  - apply_patch
+success_criteria:
+  - The first EDIT is preceded by a test READ or VERIFY command.
+failure_criteria:
+  - The first EDIT action occurs before any READ of a test file or VERIFY command.
+verifier:
+  schema_version: 0.1.0
+  rule: first_edit_after_test_read_or_verify
+  description: Read a relevant test file or run verification before the first edit.
+  params:
+    source_failure_type: premature_edit
+metadata:
+  example: true
