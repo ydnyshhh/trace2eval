@@ -18,7 +18,7 @@ from trace2eval.generation import generate_eval_case
 from trace2eval.mining import extract_causal_slice, rank_hypotheses
 from trace2eval.normalize import normalize_trace
 from trace2eval.runner import run_eval
-from trace2eval.schemas import ActionType, RawStep, RawTrace
+from trace2eval.schemas import ActionType, RawStep, RawTrace, TaskMetadata
 
 
 def test_codex_adapter_ingests_rollout() -> None:
@@ -114,14 +114,14 @@ def test_generated_eval_passes_corrected_trace() -> None:
     assert result.passed
 
 
-def test_codex_desktop_response_item_not_repeated_command_error() -> None:
+def test_repeated_command_error_ignores_response_item() -> None:
     raw = CodexJSONLAdapter().ingest(Path("examples/fixtures/codex/rollout-desktop-false-positive.jsonl"))[0]
     trace = normalize_trace(raw)
 
     assert not RepeatedCommandErrorDetector().detect(trace)
 
 
-def test_fake_dotted_identifiers_do_not_become_paths() -> None:
+def test_extract_paths_rejects_python_dotted_identifiers() -> None:
     text = (
         "False path-shaped prose: trace2eval.adapters.c re.c step.c normalized.rs\n"
         "Real path with separators: trace2eval/adapters/common.py\n"
@@ -138,6 +138,26 @@ def test_fake_dotted_identifiers_do_not_become_paths() -> None:
     assert "tests/test_parser.py" in paths
 
 
+def test_premature_edit_suppressed_for_scaffold_task() -> None:
+    prompt = "Create a tiny toy Python package and add a failing test before fixing the bug."
+    trace = normalize_trace(
+        RawTrace(
+            trace_id="scaffold-task",
+            source="generic_json",
+            task=TaskMetadata(description=prompt, prompt=prompt),
+            steps=[
+                RawStep(
+                    step_id=0,
+                    file_path="scratch/toy_parser/src/parser.py",
+                    diff="--- a/scratch/toy_parser/src/parser.py\n+++ b/scratch/toy_parser/src/parser.py",
+                )
+            ],
+        )
+    )
+
+    assert not PrematureEditDetector().detect(trace)
+
+
 def test_codex_desktop_code_output_is_not_patch_or_fake_edit() -> None:
     raw = CodexJSONLAdapter().ingest(Path("examples/fixtures/codex/rollout-desktop-false-positive.jsonl"))[0]
     trace = normalize_trace(raw)
@@ -150,7 +170,7 @@ def test_codex_desktop_code_output_is_not_patch_or_fake_edit() -> None:
     assert "trace2eval/adapters/common.py" in code_output.metadata["paths"]
 
 
-def test_scaffold_test_authoring_not_primary_premature_edit() -> None:
+def test_real_codex_toy_parser_trace_no_primary_premature_edit() -> None:
     raw = CodexJSONLAdapter().ingest(Path("examples/fixtures/codex/rollout-desktop-false-positive.jsonl"))[0]
     trace = normalize_trace(raw)
     ranked = rank_hypotheses(trace, run_detectors(trace))
