@@ -70,27 +70,37 @@ def print_terminal_report(
         failures_by_trace[failure.trace_id].append(failure)
 
     for trace in traces:
-        console.print(Panel.fit(trace.trace_id, title="Trace"))
-        timeline = Table()
-        timeline.add_column("Step", justify="right")
-        timeline.add_column("Action")
-        timeline.add_column("Phase")
-        timeline.add_column("Target / command")
-        timeline.add_column("Err", justify="center")
-        timeline.add_column("Failures")
-        markers = defaultdict(list)
-        for failure in failures_by_trace.get(trace.trace_id, []):
-            markers[failure.onset_step_id].append(failure.failure_type)
-        for step in trace.steps:
-            target = step.command or step.target or step.raw_action or ""
-            if len(target) > 90:
-                target = target[:87] + "..."
-            timeline.add_row(
-                str(step.step_id),
-                step.action_type.value,
-                step.phase.value,
-                target,
-                "yes" if step.is_error else "",
-                ", ".join(markers.get(step.step_id, [])),
-            )
-        console.print(timeline)
+        print_trace_timeline(trace, failures_by_trace.get(trace.trace_id, []), console=console)
+
+
+def print_trace_timeline(
+    trace: NormalizedTrace,
+    failures: list[FailureHypothesis] | None = None,
+    *,
+    console: Console | None = None,
+) -> None:
+    console = console or Console()
+    console.print(Panel.fit(trace.trace_id, title="Trace"))
+    timeline = Table()
+    timeline.add_column("Step", justify="right")
+    timeline.add_column("Action")
+    timeline.add_column("Phase")
+    timeline.add_column("Target / command")
+    timeline.add_column("Err", justify="center")
+    timeline.add_column("Failures")
+    markers = defaultdict(list)
+    for failure in failures or []:
+        markers[failure.onset_step_id].append(failure.failure_type)
+    for step in trace.steps:
+        target = step.command or step.target or step.raw_action or ""
+        if len(target) > 90:
+            target = target[:87] + "..."
+        timeline.add_row(
+            str(step.step_id),
+            step.action_type.value,
+            step.phase.value,
+            target,
+            "yes" if step.is_error else "",
+            ", ".join(markers.get(step.step_id, [])),
+        )
+    console.print(timeline)

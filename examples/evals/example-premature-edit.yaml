@@ -9,6 +9,15 @@ initial_state:
     - "Search output mentions src/parser.py and tests/test_parser.py."
   included_step_ids: [0, 1, 2, 3]
   bad_action_summary: "The first edit touched src/parser.py before reading tests/test_parser.py."
+  task_constraints:
+    expected_relevant_test_files:
+      - tests/test_parser.py
+    expected_relevant_source_files:
+      - src/parser.py
+    forbidden_premature_target: src/parser.py
+    required_observation_paths:
+      - tests/test_parser.py
+      - src/parser.py
 tools:
   - shell
   - apply_patch
@@ -22,5 +31,15 @@ verifier:
   description: Read a relevant test file or run verification before the first edit.
   params:
     source_failure_type: premature_edit
+    task_constraints:
+      expected_relevant_test_files:
+        - tests/test_parser.py
+      expected_relevant_source_files:
+        - src/parser.py
+      forbidden_premature_target: src/parser.py
+      required_observation_paths:
+        - tests/test_parser.py
+        - src/parser.py
 metadata:
   example: true
+  source_task_id: bug-parse-date

@@ -38,7 +38,8 @@ uv run trace2eval ingest generic --path examples/traces --out .trace2eval/raw
 uv run trace2eval normalize --input .trace2eval/raw --out .trace2eval/normalized
 uv run trace2eval mine --input .trace2eval/normalized --out .trace2eval/reports/failures.jsonl
 uv run trace2eval generate --traces .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl --out .trace2eval/evals
-uv run trace2eval run --evals .trace2eval/evals --traces .trace2eval/normalized --out .trace2eval/reports/eval_results.jsonl
+uv run trace2eval run --evals .trace2eval/evals --traces .trace2eval/normalized --mode source --out .trace2eval/reports/eval_results.jsonl
+uv run trace2eval inspect --input .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl
 uv run trace2eval report --traces .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl
 ```
 
@@ -111,7 +112,9 @@ The adapter preserves session id, usage metadata, structured output, messages, t
 - `trace2eval normalize --input .trace2eval/raw --out .trace2eval/normalized`: normalize actions and phases.
 - `trace2eval mine --input .trace2eval/normalized --out .trace2eval/reports/failures.jsonl`: run detectors.
 - `trace2eval generate --traces .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl --out .trace2eval/evals`: generate EvalCase YAML.
-- `trace2eval run --evals .trace2eval/evals --traces .trace2eval/normalized --out .trace2eval/reports/eval_results.jsonl`: replay evals against traces.
+- `trace2eval run --evals .trace2eval/evals --traces .trace2eval/normalized --mode source|task|suite --out .trace2eval/reports/eval_results.jsonl`: replay evals against their source trace, matching task traces, or a full suite.
+- `trace2eval inspect --input TRACE_OR_DIR --failures .trace2eval/reports/failures.jsonl`: print a normalized timeline with detector markers.
+- `trace2eval validate --examples examples/traces`: run the in-memory health check: example trace to normalize to mine to generate to run.
 - `trace2eval report --traces .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl`: print a Rich terminal report.
 
 ## Generated Eval Format
@@ -129,6 +132,10 @@ initial_state:
   previous_observations:
     - Search output mentions src/parser.py and tests/test_parser.py.
   included_step_ids: [0, 1, 2, 3]
+  task_constraints:
+    expected_relevant_test_files: [tests/test_parser.py]
+    expected_relevant_source_files: [src/parser.py]
+    forbidden_premature_target: src/parser.py
 success_criteria:
   - The first EDIT is preceded by a test READ or VERIFY command.
 failure_criteria:
@@ -137,7 +144,20 @@ verifier:
   rule: first_edit_after_test_read_or_verify
   params:
     source_failure_type: premature_edit
+    task_constraints:
+      expected_relevant_test_files: [tests/test_parser.py]
 ```
+
+Generated evals are still deterministic trajectory-level proxy evals, but they now carry task-specific constraints from the causal slice: expected relevant tests, expected relevant source files, forbidden premature edit targets, and required observation paths. Runner modes control how broadly those evals are replayed.
+
+## Realistic Fixtures
+
+The repository includes sanitized realistic adapter fixtures:
+
+- `examples/realistic/codex/rollout-sanitized-example.jsonl`
+- `examples/realistic/claude_hooks/events-sanitized-example.jsonl`
+
+Use them to inspect adapter behavior before pointing Trace2Eval at private local traces.
 
 ## Failure Detector Taxonomy
 

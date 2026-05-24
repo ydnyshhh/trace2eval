@@ -82,6 +82,8 @@ def extract_causal_slice(trace: NormalizedTrace, hypothesis: FailureHypothesis) 
         metadata={
             "hypothesis": hypothesis.model_dump(mode="json", exclude_none=True),
             "verifier_rule": rule,
+            "source_task_id": trace.task.task_id,
+            "source_task_description": trace.task.description or trace.task.prompt,
             "raw_trace_metadata": trace.metadata,
         },
     )

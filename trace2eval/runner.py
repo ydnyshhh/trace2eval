@@ -10,7 +10,7 @@ from trace2eval.schemas import ActionType, EvalCase, NormalizedStep, NormalizedT
 def run_eval(eval_case: EvalCase, trace: NormalizedTrace) -> RunResult:
     rule = eval_case.verifier.rule
     if rule == "first_edit_after_test_read_or_verify":
-        passed, evidence = rule_first_edit_after_test_read_or_verify(trace)
+        passed, evidence = rule_first_edit_after_test_read_or_verify(trace, eval_case)
     elif rule == "verify_after_last_edit_before_stop":
         passed, evidence = rule_verify_after_last_edit_before_stop(trace)
     elif rule == "no_repeated_identical_failing_command":
@@ -36,24 +36,44 @@ def run_eval(eval_case: EvalCase, trace: NormalizedTrace) -> RunResult:
     )
 
 
-def run_evals(eval_cases: list[EvalCase], traces: list[NormalizedTrace]) -> list[RunResult]:
+def run_evals(eval_cases: list[EvalCase], traces: list[NormalizedTrace], *, mode: str = "suite") -> list[RunResult]:
     results: list[RunResult] = []
     for eval_case in eval_cases:
-        for trace in traces:
+        for trace in select_traces_for_eval(eval_case, traces, mode):
             results.append(run_eval(eval_case, trace))
     return results
 
 
-def rule_first_edit_after_test_read_or_verify(trace: NormalizedTrace) -> tuple[bool, list[str]]:
+def select_traces_for_eval(eval_case: EvalCase, traces: list[NormalizedTrace], mode: str) -> list[NormalizedTrace]:
+    if mode == "suite":
+        return traces
+    if mode == "source":
+        return [trace for trace in traces if trace.trace_id == eval_case.source_trace_id]
+    if mode == "task":
+        source_task_id = eval_case.metadata.get("source_task_id")
+        source_description = eval_case.metadata.get("source_task_description") or eval_case.task_description
+        matches = [
+            trace
+            for trace in traces
+            if (source_task_id and trace.task.task_id == source_task_id)
+            or (source_description and (trace.task.description == source_description or trace.task.prompt == source_description))
+        ]
+        return matches or [trace for trace in traces if trace.trace_id == eval_case.source_trace_id]
+    raise ValueError(f"Unsupported run mode: {mode}")
+
+
+def rule_first_edit_after_test_read_or_verify(trace: NormalizedTrace, eval_case: EvalCase | None = None) -> tuple[bool, list[str]]:
     first_edit = next((step for step in trace.steps if step.action_type == ActionType.EDIT), None)
     if not first_edit:
         return True, ["No EDIT action observed."]
     prior = trace.steps[: trace.steps.index(first_edit)]
-    if any(step.action_type == ActionType.READ and step.touches_test_file for step in prior):
+    expected_tests = expected_test_files(eval_case)
+    if any(step.action_type == ActionType.READ and step.touches_test_file and read_matches_expected(step, expected_tests) for step in prior):
         return True, [f"First edit at step {first_edit.step_id} was preceded by test READ."]
     if any(step.action_type == ActionType.VERIFY for step in prior):
         return True, [f"First edit at step {first_edit.step_id} was preceded by VERIFY."]
-    return False, [f"First edit at step {first_edit.step_id} occurred before test READ or VERIFY."]
+    detail = f" Expected one of {expected_tests}." if expected_tests else ""
+    return False, [f"First edit at step {first_edit.step_id} occurred before test READ or VERIFY.{detail}"]
 
 
 def rule_verify_after_last_edit_before_stop(trace: NormalizedTrace) -> tuple[bool, list[str]]:
@@ -153,3 +173,28 @@ def rule_no_submit_after_failed_verify(trace: NormalizedTrace) -> tuple[bool, li
     if last_verify.is_error:
         return False, [f"Last VERIFY at step {last_verify.step_id} failed before STOP at step {stop.step_id}."]
     return True, ["No submit-after-failed-verify pattern observed."]
+
+
+def expected_test_files(eval_case: EvalCase | None) -> list[str]:
+    if not eval_case:
+        return []
+    constraints = eval_case.verifier.params.get("task_constraints") or eval_case.metadata.get("task_constraints") or {}
+    values = constraints.get("expected_relevant_test_files") or []
+    return [normalize_path(str(value)) for value in values]
+
+
+def read_matches_expected(step: NormalizedStep, expected_tests: list[str]) -> bool:
+    if not expected_tests:
+        return True
+    paths = [normalize_path(str(path)) for path in step.metadata.get("paths") or []]
+    if step.target:
+        paths.append(normalize_path(step.target))
+    text = "\n".join(part for part in (step.command, step.target, step.observation, step.raw_step.content) if part)
+    return any(
+        expected in paths or any(path.endswith(expected.rsplit("/", 1)[-1]) for path in paths) or expected in normalize_path(text)
+        for expected in expected_tests
+    )
+
+
+def normalize_path(value: str) -> str:
+    return value.replace("\\", "/").strip().lower()

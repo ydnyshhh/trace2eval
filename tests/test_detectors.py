@@ -7,6 +7,7 @@ from trace2eval.detectors import (
     SubmitAfterFailureDetector,
     TestEditingRewardHackDetector,
     WrongFileLocalizationDetector,
+    run_detectors,
 )
 from trace2eval.normalize import normalize_trace
 from trace2eval.schemas import RawStep, RawTrace, TaskMetadata
@@ -110,3 +111,18 @@ def test_submit_after_failure_detector() -> None:
         )
     )
     assert SubmitAfterFailureDetector().detect(trace)
+
+
+def test_no_false_positive_when_test_read_and_pytest_passes() -> None:
+    trace = normalize_trace(
+        trace_for(
+            RawStep(step_id=0, command="cat tests/test_bug.py"),
+            RawStep(step_id=1, file_path="src/bug.py", diff="--- a/src/bug.py\n+++ b/src/bug.py"),
+            RawStep(step_id=2, command="pytest tests/test_bug.py", exit_code=0, observation="1 passed"),
+            RawStep(step_id=3, event_type="final", content="done"),
+        )
+    )
+    failure_types = {finding.failure_type for finding in run_detectors(trace)}
+    assert "premature_edit" not in failure_types
+    assert "no_verification" not in failure_types
+    assert "submit_after_failure" not in failure_types

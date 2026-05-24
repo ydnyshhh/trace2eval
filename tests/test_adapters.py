@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from trace2eval.adapters import (
     ClaudeCodeHeadlessJSONAdapter,
@@ -55,3 +56,20 @@ def test_claude_headless_adapter_messages(tmp_path) -> None:
     traces = ClaudeCodeHeadlessJSONAdapter().ingest(path)
     assert traces[0].agent.model_name == "claude-example"
     assert traces[0].steps[1].command == "pytest"
+
+
+def test_realistic_codex_fixture_ingests() -> None:
+    traces = CodexJSONLAdapter().ingest(Path("examples/realistic/codex"))
+    assert traces
+    trace = traces[0]
+    assert trace.source == "codex"
+    assert any(step.command and "pytest" in step.command for step in trace.steps)
+    assert any(step.metadata.get("raw_event") for step in trace.steps)
+
+
+def test_realistic_claude_hook_fixture_ingests() -> None:
+    traces = ClaudeCodeHookJSONLAdapter().ingest(Path("examples/realistic/claude_hooks"))
+    assert traces
+    trace = traces[0]
+    assert trace.task.task_id == "claude-realistic-001"
+    assert any(step.file_path == "tests/test_cache.py" for step in trace.steps)

@@ -32,7 +32,7 @@ from trace2eval.io import (
 )
 from trace2eval.mining import mine_trace, rank_hypotheses
 from trace2eval.normalize import normalize_trace
-from trace2eval.report import build_report, print_terminal_report
+from trace2eval.report import build_report, print_terminal_report, print_trace_timeline
 from trace2eval.runner import run_evals
 
 console = Console()
@@ -176,13 +176,48 @@ def run_command(
     evals_path: Annotated[Path, typer.Option("--evals", help="EvalCase YAML/JSON file or directory.")] = Path(".trace2eval/evals"),
     traces_path: Annotated[Path, typer.Option("--traces", help="NormalizedTrace JSON file or directory.")] = Path(".trace2eval/normalized"),
     out: Annotated[Path, typer.Option("--out", help="Output JSONL file for eval run results.")] = Path(".trace2eval/reports/eval_results.jsonl"),
+    mode: Annotated[str, typer.Option("--mode", help="Run mode: source, task, or suite.")] = "suite",
 ) -> None:
     evals = load_eval_cases(evals_path)
     traces = load_normalized_traces(traces_path)
-    results = run_evals(evals, traces)
+    results = run_evals(evals, traces, mode=mode)
     write_jsonl(out, results)
     passed = sum(1 for result in results if result.passed)
     console.print(f"Ran {len(results)} eval/trace checks: {passed} passed, {len(results) - passed} failed. Wrote {out}")
+
+
+@app.command("inspect")
+def inspect_command(
+    input_path: Annotated[Path, typer.Option("--input", help="RawTrace or NormalizedTrace JSON file/directory.")],
+    failures_path: Annotated[Path | None, typer.Option("--failures", help="Optional failure hypotheses JSONL for markers.")] = None,
+) -> None:
+    traces = load_any_normalized_traces(input_path)
+    failures = load_failure_hypotheses(failures_path) if failures_path else []
+    if not failures:
+        for trace in traces:
+            failures.extend(mine_trace(trace))
+    for trace in traces:
+        print_trace_timeline(trace, [failure for failure in failures if failure.trace_id == trace.trace_id], console=console)
+
+
+@app.command("validate")
+def validate_command(
+    examples: Annotated[Path, typer.Option("--examples", help="Canonical example RawTrace directory.")] = Path("examples/traces"),
+) -> None:
+    raw_traces = GenericJSONAdapter().ingest(examples)
+    normalized = [normalize_trace(trace) for trace in raw_traces]
+    failures = []
+    for trace in normalized:
+        failures.extend(mine_trace(trace))
+    evals = generate_eval_cases(normalized, failures)
+    results = run_evals(evals, normalized, mode="source")
+    failed_as_expected = sum(1 for result in results if not result.passed)
+    console.print(
+        f"Validation: {len(raw_traces)} traces, {len(failures)} hypotheses, "
+        f"{len(evals)} evals, {len(results)} source replay(s), {failed_as_expected} failed as expected."
+    )
+    if not raw_traces or not failures or not evals or not results or failed_as_expected != len(results):
+        raise typer.Exit(1)
 
 
 @app.command("report")
@@ -209,6 +244,13 @@ def write_raw_traces(traces: list, out: Path) -> None:
     for trace in traces:
         write_json(out / f"{slugify(trace.trace_id)}.json", trace)
     console.print(f"Wrote {len(traces)} RawTrace file(s) into {out}")
+
+
+def load_any_normalized_traces(path: Path):
+    try:
+        return load_normalized_traces(path)
+    except Exception:
+        return [normalize_trace(trace) for trace in load_raw_traces(path)]
 
 
 if __name__ == "__main__":
