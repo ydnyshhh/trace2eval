@@ -121,9 +121,36 @@ The adapter preserves session id, usage metadata, structured output, messages, t
 - `trace2eval validate --examples examples/traces`: run the negative health check: failed examples normalize, mine, generate evals, and fail source replay as expected.
 - `trace2eval validate --examples examples/traces --positive examples/traces/passing_read_test_then_edit.json`: additionally verify matching passing traces do not overfire.
 - `trace2eval benchmark --fixtures examples/real_runs`: score curated real-run fixture notes against detected primary failure types.
+- `trace2eval index --traces .trace2eval/normalized --out .trace2eval/trace2eval.duckdb`: build an optional DuckDB corpus index from existing artifacts.
+- `trace2eval query --db .trace2eval/trace2eval.duckdb --top-failures`: run structured corpus queries over the optional DuckDB index.
 - `trace2eval report --traces .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl`: print a Rich terminal report.
 
 Reports include a per-trace timeline plus a causal hypothesis section that separates the primary root cause, supporting symptoms, and downstream failures.
+
+## DuckDB Indexing
+
+Trace2Eval still treats JSON, JSONL, and YAML files under `.trace2eval/` as the source of truth. DuckDB is an optional local analytical index for larger trace corpora where structured queries are faster than scanning files.
+
+Build or replace an index from existing artifacts:
+
+```powershell
+uv run trace2eval index `
+  --traces .trace2eval/normalized `
+  --failures .trace2eval/reports/failures.jsonl `
+  --evals .trace2eval/evals `
+  --runs .trace2eval/reports/eval_results.jsonl `
+  --out .trace2eval/trace2eval.duckdb
+```
+
+Run common queries:
+
+```powershell
+uv run trace2eval query --db .trace2eval/trace2eval.duckdb --top-failures
+uv run trace2eval query --db .trace2eval/trace2eval.duckdb --by-source
+uv run trace2eval query --db .trace2eval/trace2eval.duckdb --by-agent
+uv run trace2eval query --db .trace2eval/trace2eval.duckdb --trace TRACE_ID
+uv run trace2eval query --db .trace2eval/trace2eval.duckdb --failure-type premature_edit
+```
 
 ## Generated Eval Format
 

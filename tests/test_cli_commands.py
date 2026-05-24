@@ -65,3 +65,19 @@ def test_replay_command_prints_failure_story() -> None:
     assert "First Bad Action" in result.output
     assert "Generated Eval" in result.output
     assert "failed as expected" in result.output
+
+
+def test_index_and_query_commands_run_duckdb_smoke(tmp_path) -> None:
+    db_path = tmp_path / "trace2eval.duckdb"
+
+    index_result = runner.invoke(app, ["index", "--traces", "examples/traces", "--out", str(db_path)])
+
+    assert index_result.exit_code == 0
+    assert db_path.exists()
+    assert "Indexed Trace2Eval corpus" in index_result.output
+    assert "traces" in index_result.output
+
+    query_result = runner.invoke(app, ["query", "--db", str(db_path), "--top-failures"])
+
+    assert query_result.exit_code == 0
+    assert "Top Failures" in query_result.output

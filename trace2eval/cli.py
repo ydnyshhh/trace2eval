@@ -37,6 +37,15 @@ from trace2eval.normalize import normalize_trace
 from trace2eval.replay import build_replay, load_replay_trace, print_replay_story
 from trace2eval.report import build_report, print_terminal_report, print_trace_timeline
 from trace2eval.runner import run_evals
+from trace2eval.storage.duckdb_store import (
+    IndexSummary,
+    build_duckdb_index,
+    query_by_agent,
+    query_by_source,
+    query_failure_type,
+    query_top_failures,
+    query_trace,
+)
 
 console = Console()
 app = typer.Typer(help="Trace-mined regression evals for coding agents.")
@@ -270,6 +279,70 @@ def replay_command(
     print_replay_story(trace, selected_failure, eval_case, result, console=console)
 
 
+@app.command("index")
+def index_command(
+    traces_path: Annotated[Path, typer.Option("--traces", help="RawTrace or NormalizedTrace JSON file or directory.")],
+    failures_path: Annotated[Path | None, typer.Option("--failures", help="Optional failure hypotheses JSONL.")] = None,
+    evals_path: Annotated[Path | None, typer.Option("--evals", help="Optional EvalCase YAML/JSON file or directory.")] = None,
+    runs_path: Annotated[Path | None, typer.Option("--runs", help="Optional eval run results JSONL.")] = None,
+    out: Annotated[Path, typer.Option("--out", help="Output DuckDB database path.")] = Path(".trace2eval/trace2eval.duckdb"),
+) -> None:
+    summary = build_duckdb_index(
+        traces_path=traces_path,
+        failures_path=failures_path,
+        evals_path=evals_path,
+        runs_path=runs_path,
+        out_path=out,
+    )
+    print_index_summary(summary)
+
+
+@app.command("query")
+def query_command(
+    db_path: Annotated[Path, typer.Option("--db", help="DuckDB index path.")] = Path(".trace2eval/trace2eval.duckdb"),
+    top_failures: Annotated[bool, typer.Option("--top-failures", help="Show failure counts and average scores.")] = False,
+    by_source: Annotated[bool, typer.Option("--by-source", help="Group traces, failures, and evals by source.")] = False,
+    by_agent: Annotated[bool, typer.Option("--by-agent", help="Group traces and failures by agent/model.")] = False,
+    trace_id: Annotated[str | None, typer.Option("--trace", help="Show one trace timeline and failures.")] = None,
+    failure_type: Annotated[str | None, typer.Option("--failure-type", help="List traces with this failure type.")] = None,
+) -> None:
+    if not db_path.exists():
+        console.print(f"[red]DuckDB index not found: {db_path}[/red]")
+        console.print("Run: trace2eval index --traces .trace2eval/normalized --out .trace2eval/trace2eval.duckdb")
+        raise typer.Exit(1)
+
+    selected = sum(bool(item) for item in (top_failures, by_source, by_agent, trace_id, failure_type))
+    if selected == 0:
+        print_query_help()
+        return
+    if selected > 1:
+        console.print("[red]Choose exactly one query mode.[/red]")
+        print_query_help()
+        raise typer.Exit(1)
+
+    if top_failures:
+        rows = query_top_failures(db_path)
+        print_rows("Top Failures", rows, ("failure_type", "count", "average_confidence", "average_severity"))
+        if not rows:
+            console.print("[yellow]No failures indexed. Re-run index with --failures to populate this query.[/yellow]")
+    elif by_source:
+        print_rows("By Source", query_by_source(db_path), ("source", "trace_count", "failure_count", "eval_count"))
+    elif by_agent:
+        print_rows("By Agent", query_by_agent(db_path), ("agent_name", "model_name", "trace_count", "failure_count"))
+    elif trace_id:
+        result = query_trace(db_path, trace_id)
+        if result.trace is None:
+            console.print(f"[red]Trace not found: {trace_id}[/red]")
+            raise typer.Exit(1)
+        print_trace_query_result(result.trace, result.steps, result.failures)
+    elif failure_type:
+        print_rows(
+            f"Failure Type: {failure_type}",
+            query_failure_type(db_path, failure_type),
+            ("trace_id", "source", "agent_name", "model_name", "onset_step_id", "confidence", "severity", "causal_role"),
+        )
+
+
 @app.command("benchmark")
 def benchmark_command(
     fixtures: Annotated[Path, typer.Option("--fixtures", help="Directory containing benchmark case YAML notes.")] = Path("examples/real_runs"),
@@ -332,6 +405,96 @@ def load_any_normalized_traces(path: Path):
         return load_normalized_traces(path)
     except Exception:
         return [normalize_trace(trace) for trace in load_raw_traces(path)]
+
+
+def print_index_summary(summary: IndexSummary) -> None:
+    console.print("[bold]Indexed Trace2Eval corpus[/bold]")
+    table = Table(show_header=False)
+    table.add_column("Artifact")
+    table.add_column("Count", justify="right")
+    table.add_row("traces", str(summary.traces))
+    table.add_row("steps", str(summary.steps))
+    table.add_row("failures", str(summary.failures))
+    table.add_row("evals", str(summary.evals))
+    table.add_row("runs", str(summary.runs))
+    console.print(table)
+    for warning in summary.warnings:
+        console.print(f"[yellow]WARN[/yellow] {warning}")
+    console.print(f"database: {summary.database}")
+
+
+def print_query_help() -> None:
+    console.print("[bold]Available query modes[/bold]")
+    console.print("  --top-failures")
+    console.print("  --by-source")
+    console.print("  --by-agent")
+    console.print("  --trace TRACE_ID")
+    console.print("  --failure-type FAILURE_TYPE")
+
+
+def print_rows(title: str, rows: list[dict], columns: tuple[str, ...]) -> None:
+    table = Table(title=title)
+    for column in columns:
+        justify = "right" if column in {"count", "trace_count", "failure_count", "eval_count"} else "left"
+        table.add_column(column, justify=justify)
+    if not rows:
+        table.add_row(*(["none"] + [""] * (len(columns) - 1)))
+    for row in rows:
+        table.add_row(*(format_cell(row.get(column)) for column in columns))
+    console.print(table)
+
+
+def print_trace_query_result(trace: dict, steps: list[dict], failures: list[dict]) -> None:
+    trace_table = Table(title=f"Trace: {trace['trace_id']}")
+    trace_table.add_column("Field")
+    trace_table.add_column("Value")
+    for key in (
+        "source",
+        "task_id",
+        "task_description",
+        "agent_name",
+        "model_name",
+        "outcome_success",
+        "tests_passed",
+        "step_count",
+    ):
+        trace_table.add_row(key, format_cell(trace.get(key)))
+    console.print(trace_table)
+
+    step_table = Table(title="Steps")
+    for column in ("step_id", "action_type", "phase", "target", "command", "is_error"):
+        step_table.add_column(column)
+    for step in steps:
+        step_table.add_row(
+            format_cell(step.get("step_id")),
+            format_cell(step.get("action_type")),
+            format_cell(step.get("phase")),
+            truncate_cell(step.get("target")),
+            truncate_cell(step.get("command")),
+            format_cell(step.get("is_error")),
+        )
+    console.print(step_table)
+
+    print_rows(
+        "Failures",
+        failures,
+        ("failure_type", "onset_step_id", "confidence", "severity", "detector", "causal_role"),
+    )
+
+
+def truncate_cell(value: object, limit: int = 80) -> str:
+    text = format_cell(value)
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+def format_cell(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return f"{value:.3f}"
+    return str(value)
 
 
 def doctor_symbol(status: str) -> str:
