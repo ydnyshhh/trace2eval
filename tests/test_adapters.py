@@ -23,6 +23,31 @@ def test_codex_jsonl_adapter_defensive_schema(tmp_path) -> None:
     assert traces[0].steps[2].metadata["raw_event"]["unknown"]["nested"] is True
 
 
+def test_codex_result_step_inherits_successful_tool_call_context(tmp_path) -> None:
+    path = tmp_path / "rollout-edit.jsonl"
+    events = [
+        {
+            "type": "tool_call",
+            "id": "call-1",
+            "tool": {"name": "apply_patch"},
+            "input": {"file_path": "src/parser.py"},
+        },
+        {
+            "type": "tool_result",
+            "call_id": "call-1",
+            "status": "success",
+            "output": "Done",
+        },
+    ]
+    path.write_text("\n".join(json.dumps(event) for event in events), encoding="utf-8")
+
+    trace = CodexJSONLAdapter().ingest(path)[0]
+
+    assert trace.steps[1].tool_name == "apply_patch"
+    assert trace.steps[1].file_path == "src/parser.py"
+    assert trace.steps[1].tool_args == {"file_path": "src/parser.py"}
+
+
 def test_claude_hook_adapter_groups_by_session(tmp_path) -> None:
     path = tmp_path / "events.jsonl"
     events = [
@@ -35,6 +60,22 @@ def test_claude_hook_adapter_groups_by_session(tmp_path) -> None:
     assert {trace.task.task_id for trace in traces} == {"s1", "s2"}
     s1 = next(trace for trace in traces if trace.task.task_id == "s1")
     assert s1.steps[1].command == "pytest"
+
+
+def test_claude_hook_adapter_keeps_missing_session_events_with_active_session(tmp_path) -> None:
+    path = tmp_path / "events.jsonl"
+    events = [
+        {"event_name": "PreToolUse", "payload": {"tool_name": "Bash", "tool_input": {"command": "pwd"}}},
+        {"event_name": "UserPromptSubmit", "session_id": "s1", "payload": {"content": "Fix bug"}},
+        {"event_name": "PostToolUse", "payload": {"tool_name": "Bash", "tool_input": {"command": "pytest"}}},
+    ]
+    path.write_text("\n".join(json.dumps(event) for event in events), encoding="utf-8")
+
+    traces = ClaudeCodeHookJSONLAdapter().ingest(path)
+
+    assert len(traces) == 1
+    assert traces[0].task.task_id == "s1"
+    assert len(traces[0].steps) == 3
 
 
 def test_claude_headless_adapter_messages(tmp_path) -> None:

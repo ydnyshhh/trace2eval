@@ -1,6 +1,6 @@
 import pytest
 
-from trace2eval.io import load_raw_traces
+from trace2eval.io import load_raw_traces, slugify
 from trace2eval.schemas import (
     CausalSlice,
     FailureHypothesis,
@@ -62,6 +62,15 @@ def test_normalized_step_extracted_paths_are_canonical_source() -> None:
     )
 
     assert step.extracted_paths() == ["pyproject.toml", "src/other.py", "README.md", "tests/test_parser.py", "src/parser.py"]
+
+
+def test_slugify_adds_hash_suffix_when_truncated() -> None:
+    first = slugify("trace-" + ("a" * 100) + "-one", max_length=24)
+    second = slugify("trace-" + ("a" * 100) + "-two", max_length=24)
+
+    assert len(first) <= 24
+    assert len(second) <= 24
+    assert first != second
 
 
 def test_loaders_reject_missing_schema_version(tmp_path) -> None:

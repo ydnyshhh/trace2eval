@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Iterator
+from hashlib import sha1
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -23,7 +24,14 @@ T = TypeVar("T", bound=BaseModel)
 
 def slugify(value: str, max_length: int = 90) -> str:
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-._")
-    return (slug or "trace")[:max_length]
+    slug = slug or "trace"
+    if len(slug) <= max_length:
+        return slug
+    digest = sha1(value.encode("utf-8", errors="replace")).hexdigest()[:8]
+    if max_length <= len(digest) + 1:
+        return digest[:max_length]
+    prefix = slug[: max_length - len(digest) - 1].rstrip("-._") or "trace"
+    return f"{prefix}-{digest}"
 
 
 def ensure_dir(path: Path) -> Path:

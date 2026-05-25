@@ -78,7 +78,7 @@ def build_duckdb_index(
         insert_failures(connection, failures)
         insert_evals(connection, evals)
         insert_runs(connection, runs)
-    cleanup_wal_file(temp_path)
+    remove_duckdb_wal_if_present(temp_path)
     replace_database(temp_path, out_path)
     return summary
 
@@ -633,16 +633,16 @@ def temporary_database_path(out_path: Path) -> Path:
 
 def replace_database(temp_path: Path, out_path: Path) -> None:
     temp_path.replace(out_path)
-    cleanup_wal_file(out_path)
+    remove_duckdb_wal_if_present(out_path)
 
 
 def cleanup_database_files(path: Path) -> None:
     if path.exists():
         path.unlink()
-    cleanup_wal_file(path)
+    remove_duckdb_wal_if_present(path)
 
 
-def cleanup_wal_file(path: Path) -> None:
+def remove_duckdb_wal_if_present(path: Path) -> None:
     wal_path = path.with_suffix(path.suffix + ".wal")
     if wal_path.exists():
         wal_path.unlink()

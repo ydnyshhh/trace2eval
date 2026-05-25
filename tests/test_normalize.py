@@ -1,9 +1,12 @@
 from trace2eval.normalize import (
+    classify_action,
     classify_command,
     detect_error,
     is_source_path,
     is_test_path,
+    map_step,
     normalize_trace,
+    segment_phases,
 )
 from trace2eval.schemas import ActionType, Phase, RawStep, RawTrace
 
@@ -58,6 +61,41 @@ def test_error_detection_ignores_benign_failure_words() -> None:
     is_error, signature = detect_error(RawStep(step_id=100, observation="12 passed, 1 failed"))
     assert is_error
     assert signature == "12 passed, 1 failed"
+
+
+def test_error_detection_uses_filtered_signature_for_boolean() -> None:
+    is_error, signature = detect_error(RawStep(step_id=101, observation="previously failed tests now pass"))
+
+    assert not is_error
+    assert signature is None
+
+
+def test_classify_action_prefers_verify_command_over_stale_diff() -> None:
+    step = RawStep(
+        step_id=1,
+        tool_name="shell",
+        command="pytest tests/test_parser.py",
+        diff="--- a/src/parser.py\n+++ b/src/parser.py",
+    )
+
+    assert classify_action(step, ["src/parser.py", "tests/test_parser.py"]) == ActionType.VERIFY
+    normalized = map_step(step)
+    assert normalized.action_type == ActionType.VERIFY
+    assert not normalized.modifies_file
+    assert not normalized.is_patch
+
+
+def test_segment_phases_returns_new_steps_without_mutating_input() -> None:
+    steps = [
+        map_step(RawStep(step_id=0, role="assistant", content="Plan")),
+        map_step(RawStep(step_id=1, command="rg parser")),
+    ]
+
+    phased = segment_phases(steps)
+
+    assert [step.phase for step in steps] == [Phase.UNKNOWN, Phase.UNKNOWN]
+    assert [step.phase for step in phased] == [Phase.UNDERSTANDING, Phase.EXPLORATION]
+    assert phased[0] is not steps[0]
 
 
 def test_phase_segmentation() -> None:

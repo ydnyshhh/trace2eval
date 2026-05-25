@@ -65,22 +65,18 @@ class CodexJSONLAdapter:
         related_call = related_call or {}
         event_type = extract_event_type(event)
         is_result = "result" in (event_type or "").lower()
-        should_copy_action = not is_result or extract_exit_code(event) is not None or (extract_status(event) or "").lower() in {
-            "failed",
-            "failure",
-            "error",
-        }
+        has_related_call = bool(related_call)
         return RawStep(
             step_id=index,
             timestamp=extract_timestamp(event),
             event_type=event_type,
             role=extract_role(event),
             content=extract_content(event),
-            tool_name=extract_tool_name(event) or (extract_tool_name(related_call) if should_copy_action else None),
+            tool_name=extract_tool_name(event) or (extract_tool_name(related_call) if has_related_call else None),
             tool_args=extract_tool_args(event) or extract_tool_args(related_call),
-            command=extract_command(event) or (extract_command(related_call) if should_copy_action else None),
+            command=extract_command(event) or (extract_command(related_call) if has_related_call else None),
             observation=extract_observation(event),
-            file_path=extract_file_path(event) or (extract_file_path(related_call) if should_copy_action else None),
+            file_path=extract_file_path(event) or (extract_file_path(related_call) if has_related_call else None),
             diff=extract_diff(event) or (extract_diff(related_call) if not is_result else None),
             exit_code=extract_exit_code(event),
             status=extract_status(event),

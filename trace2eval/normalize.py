@@ -57,7 +57,7 @@ ERROR_RE = re.compile(
 )
 BENIGN_ERROR_RE = re.compile(
     r"(\b\d+\s+passed\b|\b0\s+failed\b|\b0\s+failures?\b|\bno\s+errors?\s+found\b|"
-    r"\bno\s+failures?\b|\bwithout\s+failure\b|\bpreviously\s+failed\b.*\bpasses?\b|"
+    r"\bno\s+failures?\b|\bwithout\s+failure\b|\bpreviously\s+failed\b.*\bpass(?:es|ed)?\b|"
     r"\bexit code:\s*0\b|\bexit status\s+0\b|\breturn code\s+0\b)",
     re.IGNORECASE,
 )
@@ -81,8 +81,7 @@ EDIT_COMMAND_RE = re.compile(
 
 
 def normalize_trace(raw_trace: RawTrace) -> NormalizedTrace:
-    steps = [map_step(step) for step in raw_trace.steps]
-    segment_phases(steps)
+    steps = segment_phases([map_step(step) for step in raw_trace.steps])
     return NormalizedTrace(
         trace_id=raw_trace.trace_id,
         source=raw_trace.source,
@@ -100,8 +99,9 @@ def map_step(step: RawStep) -> NormalizedStep:
     command = step.command
     observation = step.observation or step.content
     action_type = classify_action(step, paths)
-    is_patch = bool(step.diff) or looks_like_patch(step.content)
-    modifies_file = action_type == ActionType.EDIT or is_patch
+    patch_signal = bool(step.diff) or looks_like_patch(step.content)
+    is_patch = action_type == ActionType.EDIT and patch_signal
+    modifies_file = action_type == ActionType.EDIT
     touches_test = any(is_test_path(path) for path in paths + ([target] if target else []))
     touches_source = any(is_source_path(path) for path in paths + ([target] if target else []))
     is_error, error_signature = detect_error(step)
@@ -138,18 +138,29 @@ def classify_action(step: RawStep, paths: list[str]) -> ActionType:
         return ActionType.STOP
     if "ask" in event or looks_like_clarifying_question(step.content):
         return ActionType.ASK_USER
-    if step.diff or looks_like_patch(patch_text):
-        return ActionType.EDIT
+    candidates: list[tuple[int, ActionType]] = []
     if command:
-        return classify_command(command)
+        command_action = classify_command(command)
+        command_priority = {
+            ActionType.VERIFY: 100,
+            ActionType.EDIT: 95,
+            ActionType.SEARCH: 90,
+            ActionType.READ: 90,
+            ActionType.EXECUTE: 60,
+        }.get(command_action, 50)
+        candidates.append((command_priority, command_action))
+    if step.diff or looks_like_patch(patch_text):
+        candidates.append((80, ActionType.EDIT))
     if tool in EDIT_TOOLS or any(word in event for word in ("edit", "patch", "write", "replace", "create")):
-        return ActionType.EDIT
+        candidates.append((75, ActionType.EDIT))
     if tool in READ_TOOLS or any(word in event for word in ("read", "open", "view")):
-        return ActionType.READ
+        candidates.append((70, ActionType.READ))
     if tool in SEARCH_TOOLS or any(word in event for word in ("search", "grep", "find", "list")):
-        return ActionType.SEARCH
+        candidates.append((70, ActionType.SEARCH))
     if tool in EXEC_TOOLS:
-        return ActionType.EXECUTE
+        candidates.append((60, ActionType.EXECUTE))
+    if candidates:
+        return max(candidates, key=lambda item: item[0])[1]
     if tool:
         if any(is_test_path(path) for path in paths) and any(word in event for word in ("result", "output")):
             return ActionType.TOOL_RESULT
@@ -227,10 +238,9 @@ def detect_error(step: RawStep) -> tuple[bool, str | None]:
     if status in {"failed", "failure", "error", "errored", "nonzero", "non-zero"}:
         return True, first_error_line(step.observation or step.content) or step.status
     text = "\n".join(part for part in (step.observation, step.content) if part)
-    if ERROR_RE.search(text):
-        signature = first_error_line(text)
-        if signature:
-            return True, signature
+    signature = first_error_line(text)
+    if signature:
+        return True, signature
     return False, None
 
 
@@ -276,34 +286,37 @@ def looks_like_clarifying_question(text: str | None) -> bool:
     return lowered.endswith("?") and any(word in lowered for word in ("which", "what", "clarify", "should i", "do you want"))
 
 
-def segment_phases(steps: list[NormalizedStep]) -> None:
+def segment_phases(steps: list[NormalizedStep]) -> list[NormalizedStep]:
     saw_edit = False
     after_error = False
+    phased_steps: list[NormalizedStep] = []
     for index, step in enumerate(steps):
         if step.action_type == ActionType.STOP:
-            step.phase = Phase.SUBMISSION
+            phase = Phase.SUBMISSION
         elif not saw_edit:
             if step.action_type == ActionType.PLAN and index == 0:
-                step.phase = Phase.UNDERSTANDING
+                phase = Phase.UNDERSTANDING
             elif step.action_type == ActionType.SEARCH:
-                step.phase = Phase.EXPLORATION
+                phase = Phase.EXPLORATION
             elif step.action_type in {ActionType.READ, ActionType.VERIFY}:
-                step.phase = Phase.LOCALIZATION
+                phase = Phase.LOCALIZATION
             elif step.action_type == ActionType.EDIT:
-                step.phase = Phase.EDITING
+                phase = Phase.EDITING
                 saw_edit = True
             else:
-                step.phase = Phase.EXPLORATION if step.action_type != ActionType.UNKNOWN else Phase.UNKNOWN
+                phase = Phase.EXPLORATION if step.action_type != ActionType.UNKNOWN else Phase.UNKNOWN
         elif after_error and step.action_type in {ActionType.SEARCH, ActionType.READ, ActionType.EXECUTE, ActionType.PLAN}:
-            step.phase = Phase.RECOVERY
+            phase = Phase.RECOVERY
         elif step.action_type == ActionType.EDIT:
-            step.phase = Phase.EDITING
+            phase = Phase.EDITING
         elif step.action_type == ActionType.VERIFY:
-            step.phase = Phase.VERIFICATION
+            phase = Phase.VERIFICATION
         elif step.action_type in {ActionType.SEARCH, ActionType.READ, ActionType.EXECUTE}:
-            step.phase = Phase.RECOVERY if after_error else Phase.EDITING
+            phase = Phase.RECOVERY if after_error else Phase.EDITING
         else:
-            step.phase = Phase.UNKNOWN
+            phase = Phase.UNKNOWN
+
+        phased_steps.append(step.model_copy(update={"phase": phase}))
 
         if step.action_type == ActionType.EDIT:
             saw_edit = True
@@ -312,3 +325,4 @@ def segment_phases(steps: list[NormalizedStep]) -> None:
             after_error = True
         elif step.action_type in {ActionType.SEARCH, ActionType.READ, ActionType.EXECUTE, ActionType.VERIFY}:
             after_error = False
+    return phased_steps

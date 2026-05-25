@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -43,10 +42,7 @@ class ClaudeCodeHookJSONLAdapter:
         traces: list[RawTrace] = []
         for file in [path] if path.is_file() else sorted(path.rglob("*.jsonl")):
             events = read_jsonl_events(file)
-            grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-            for event in events:
-                key = extract_session_id(event) or f"file:{file}"
-                grouped[key].append(event)
+            grouped = group_hook_events_by_session(file, events)
             for session_id, group in grouped.items():
                 traces.append(self.events_to_trace(file, session_id if not session_id.startswith("file:") else None, group))
         return traces
@@ -138,6 +134,30 @@ class ClaudeCodeHeadlessJSONAdapter:
             status=extract_status(event),
             metadata={"raw_event": event, "source_file": str(file), "index": index},
         )
+
+
+def group_hook_events_by_session(file: Path, events: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    pending: list[dict[str, Any]] = []
+    current_session: str | None = None
+    fallback_key = f"file:{file}"
+    for event in events:
+        session_id = extract_session_id(event)
+        if session_id:
+            current_session = session_id
+            group = grouped.setdefault(session_id, [])
+            if pending:
+                group.extend(pending)
+                pending = []
+            group.append(event)
+            continue
+        if current_session:
+            grouped.setdefault(current_session, []).append(event)
+        else:
+            pending.append(event)
+    if pending:
+        grouped.setdefault(fallback_key, []).extend(pending)
+    return grouped
 
 
 def extract_message_events(root: dict[str, Any]) -> list[dict[str, Any]]:
