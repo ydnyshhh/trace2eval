@@ -141,6 +141,28 @@ class NormalizedStep(Trace2EvalModel):
     def normalize_step_id(cls, value: Any) -> str:
         return canonical_step_id(value)
 
+    def extracted_paths(self) -> list[str]:
+        from trace2eval.adapters.common import extract_paths_from_text
+
+        paths: list[str] = []
+        for path in self.metadata.get("paths") or []:
+            normalized = canonical_extracted_path(path)
+            if normalized and normalized not in paths:
+                paths.append(normalized)
+        for value in (
+            self.target,
+            self.raw_step.file_path,
+            self.command,
+            self.observation,
+            self.raw_step.content,
+            self.raw_step.diff,
+        ):
+            for path in extract_paths_from_text(value):
+                normalized = canonical_extracted_path(path)
+                if normalized and normalized not in paths:
+                    paths.append(normalized)
+        return paths
+
 
 class NormalizedTrace(Trace2EvalModel):
     schema_version: str = SCHEMA_VERSION
@@ -285,3 +307,12 @@ def canonical_step_id_or_none(value: Any) -> str | None:
     if value is None:
         return None
     return canonical_step_id(value)
+
+
+def canonical_extracted_path(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip(" '\"`:,;()[]{}").replace("\\", "/")
+    if normalized.startswith(("a/", "b/")):
+        normalized = normalized[2:]
+    return normalized or None

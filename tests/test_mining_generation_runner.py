@@ -80,6 +80,37 @@ def test_runner_rejects_unrelated_verify_when_expected_test_is_known() -> None:
     assert not run_eval(eval_case, unrelated_verify_trace).passed
 
 
+def test_wrong_file_localization_eval_requires_mentioned_path_read() -> None:
+    bad_trace = normalize_trace(
+        RawTrace(
+            trace_id="wrong-file",
+            source="generic_json",
+            steps=[
+                RawStep(step_id=0, command="pytest tests/test_api.py", exit_code=1, observation="FAILED tests/test_api.py src/api.py"),
+                RawStep(step_id=1, file_path="src/other.py", diff="--- a/src/other.py\n+++ b/src/other.py"),
+            ],
+        )
+    )
+    failures = [failure for failure in run_detectors(bad_trace) if failure.failure_type == "wrong_file_localization"]
+    eval_case = generate_eval_case(extract_causal_slice(bad_trace, failures[0]))
+    corrected_trace = normalize_trace(
+        RawTrace(
+            trace_id="corrected",
+            source="generic_json",
+            steps=[
+                RawStep(step_id=0, command="pytest tests/test_api.py", exit_code=1, observation="FAILED tests/test_api.py src/api.py"),
+                RawStep(step_id=1, command="cat tests/test_api.py"),
+                RawStep(step_id=2, command="cat src/api.py"),
+                RawStep(step_id=3, file_path="src/other.py", diff="--- a/src/other.py\n+++ b/src/other.py"),
+            ],
+        )
+    )
+
+    assert eval_case.verifier.rule == "read_mentioned_paths_before_edit"
+    assert not run_eval(eval_case, bad_trace).passed
+    assert run_eval(eval_case, corrected_trace).passed
+
+
 def test_causal_hypothesis_report_marks_primary_and_downstream() -> None:
     trace = normalize_trace(
         RawTrace(

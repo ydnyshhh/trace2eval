@@ -92,16 +92,19 @@ def group_hypotheses_by_trace(hypotheses: list[FailureHypothesis]) -> dict[str, 
 
 
 def extract_causal_slice(trace: NormalizedTrace, hypothesis: FailureHypothesis) -> CausalSlice:
-    onset = find_step(trace, hypothesis.onset_step_id)
-    onset_index = trace.steps.index(onset) if onset in trace.steps else 0
+    step_positions = {step.step_id: index for index, step in enumerate(trace.steps)}
+    onset = find_step(trace, hypothesis.onset_step_id, step_positions)
+    onset_index = step_positions.get(onset.step_id, 0) if onset else 0
     start = max(0, onset_index - 5)
     included = list(trace.steps[start : onset_index + 1])
+    included_ids = {step.step_id for step in included}
     relevant_paths = relevant_paths_for_hypothesis(hypothesis)
     for step in trace.steps[: onset_index + 1]:
         paths = paths_for(step)
-        if any(path in relevant_paths for path in paths) and step not in included:
+        if any(path in relevant_paths for path in paths) and step.step_id not in included_ids:
             included.append(step)
-    included.sort(key=lambda step: trace.steps.index(step))
+            included_ids.add(step.step_id)
+    included.sort(key=lambda step: step_positions.get(step.step_id, len(trace.steps)))
     previous_observations = [
         truncate_observation(summary_for_step(step))
         for step in included
@@ -134,22 +137,22 @@ def extract_causal_slice(trace: NormalizedTrace, hypothesis: FailureHypothesis) 
     )
 
 
-def find_step(trace: NormalizedTrace, step_id: int | str | None) -> NormalizedStep | None:
-    for step in trace.steps:
-        if step.step_id == step_id:
-            return step
+def find_step(
+    trace: NormalizedTrace,
+    step_id: int | str | None,
+    step_positions: dict[str, int] | None = None,
+) -> NormalizedStep | None:
+    positions = step_positions or {step.step_id: index for index, step in enumerate(trace.steps)}
+    index = positions.get(str(step_id)) if step_id is not None else None
+    if index is not None:
+        return trace.steps[index]
     return trace.steps[0] if trace.steps else None
 
 
 def paths_for(step: NormalizedStep | None) -> list[str]:
     if not step:
         return []
-    paths = list(step.metadata.get("paths") or [])
-    for value in (step.target, step.command, step.observation, step.raw_step.content, step.raw_step.diff):
-        for path in extract_paths_from_text(value):
-            if path not in paths:
-                paths.append(path)
-    return paths
+    return step.extracted_paths()
 
 
 def relevant_paths_for_hypothesis(hypothesis: FailureHypothesis) -> set[str]:
@@ -235,7 +238,7 @@ def expectations_for_failure(failure_type: str) -> tuple[str, str, str, str]:
             "Read files mentioned by errors or search results before editing a different target.",
             "A different file is edited before reading the likely relevant file.",
             "Mentioned relevant files are read before unrelated edits.",
-            "first_edit_after_test_read_or_verify",
+            "read_mentioned_paths_before_edit",
         ),
     }
     return mapping.get(

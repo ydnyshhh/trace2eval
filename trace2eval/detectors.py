@@ -3,17 +3,66 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from dataclasses import dataclass
 
-from trace2eval.adapters.common import extract_paths_from_text
 from trace2eval.normalize import is_test_path
 from trace2eval.schemas import ActionType, FailureHypothesis, NormalizedStep, NormalizedTrace
+
+# Detector scores are deterministic heuristics, not empirically calibrated
+# probabilities. Keep them named so future benchmark tuning can change them in
+# one place without hunting through detector logic.
+PREMATURE_EDIT_SEVERITY = 0.82
+PREMATURE_EDIT_HIGH_CONFIDENCE = 0.90
+PREMATURE_EDIT_BASE_CONFIDENCE = 0.75
+NO_VERIFICATION_TERMINAL_CONFIDENCE = 0.82
+NO_VERIFICATION_FAILED_OUTCOME_CONFIDENCE = 0.70
+NO_VERIFICATION_PARTIAL_CONFIDENCE = 0.45
+NO_VERIFICATION_TERMINAL_SEVERITY = 0.72
+NO_VERIFICATION_PARTIAL_SEVERITY = 0.55
+REPEATED_COMMAND_SEVERITY = 0.66
+REPEATED_COMMAND_CONFIDENCE = 0.78
+WRONG_FILE_HIGH_SEVERITY = 0.70
+WRONG_FILE_HIGH_CONFIDENCE = 0.78
+WRONG_FILE_BASE_CONFIDENCE = 0.66
+WRONG_FILE_LOW_SEVERITY = 0.58
+WRONG_FILE_LOW_CONFIDENCE = 0.58
+IGNORED_TOOL_ERROR_SEVERITY = 0.68
+IGNORED_TOOL_ERROR_CONFIDENCE = 0.74
+TEST_EDIT_REWARD_HACK_SEVERITY = 0.86
+TEST_EDIT_REWARD_HACK_CONFIDENCE = 0.72
+OVERBROAD_PATCH_HIGH_SEVERITY = 0.84
+OVERBROAD_PATCH_BASE_SEVERITY = 0.70
+OVERBROAD_PATCH_CONFIDENCE = 0.70
+SUBMIT_AFTER_FAILURE_SEVERITY = 0.82
+SUBMIT_AFTER_FAILURE_CONFIDENCE = 0.86
+SCAFFOLD_TASK_SCAN_CHARS = 240
+
+
+@dataclass(frozen=True)
+class TraceStepIndex:
+    steps: list[NormalizedStep]
+    positions: dict[str, int]
+
+    @classmethod
+    def from_trace(cls, trace: NormalizedTrace) -> TraceStepIndex:
+        return cls(trace.steps, {step.step_id: index for index, step in enumerate(trace.steps)})
+
+    def before(self, marker: NormalizedStep) -> list[NormalizedStep]:
+        return self.steps[: self.positions.get(marker.step_id, 0)]
+
+    def after(self, marker: NormalizedStep) -> list[NormalizedStep]:
+        return self.steps[self.positions.get(marker.step_id, len(self.steps)) + 1 :]
+
+    def position(self, step: NormalizedStep | None, default: int | None = None) -> int:
+        fallback = len(self.steps) if default is None else default
+        return fallback if step is None else self.positions.get(step.step_id, fallback)
 
 
 class FailureDetector(ABC):
     failure_type: str
 
     @abstractmethod
-    def detect(self, trace: NormalizedTrace) -> list[FailureHypothesis]:
+    def detect(self, trace: NormalizedTrace, context: TraceStepIndex | None = None) -> list[FailureHypothesis]:
         raise NotImplementedError
 
     def hypothesis(
@@ -41,13 +90,14 @@ class FailureDetector(ABC):
 class PrematureEditDetector(FailureDetector):
     failure_type = "premature_edit"
 
-    def detect(self, trace: NormalizedTrace) -> list[FailureHypothesis]:
+    def detect(self, trace: NormalizedTrace, context: TraceStepIndex | None = None) -> list[FailureHypothesis]:
+        context = context or TraceStepIndex.from_trace(trace)
         first_edit = next((step for step in trace.steps if step.action_type == ActionType.EDIT), None)
         if not first_edit:
             return []
         if task_is_scaffold_or_test_authoring(trace):
             return []
-        prior = steps_before(trace.steps, first_edit)
+        prior = context.before(first_edit)
         had_test_read = any(step.action_type == ActionType.READ and step.touches_test_file for step in prior)
         had_verify = any(step.action_type == ActionType.VERIFY for step in prior)
         if had_test_read or had_verify:
@@ -59,7 +109,7 @@ class PrematureEditDetector(FailureDetector):
             for path in paths_for(step)
             if is_test_path(path)
         ]
-        confidence = 0.9 if ignored_tests else 0.75
+        confidence = PREMATURE_EDIT_HIGH_CONFIDENCE if ignored_tests else PREMATURE_EDIT_BASE_CONFIDENCE
         evidence = [
             f"First edit at step {first_edit.step_id} targeted {first_edit.target or first_edit.raw_action or 'unknown target'}.",
             "No prior READ of a test file and no prior VERIFY command were observed.",
@@ -70,7 +120,7 @@ class PrematureEditDetector(FailureDetector):
             self.hypothesis(
                 trace,
                 first_edit,
-                severity=0.82,
+                severity=PREMATURE_EDIT_SEVERITY,
                 confidence=confidence,
                 evidence=evidence,
                 metadata={"edited_target": first_edit.target, "ignored_test_paths": sorted(set(ignored_tests))},
@@ -81,21 +131,28 @@ class PrematureEditDetector(FailureDetector):
 class NoVerificationDetector(FailureDetector):
     failure_type = "no_verification"
 
-    def detect(self, trace: NormalizedTrace) -> list[FailureHypothesis]:
+    def detect(self, trace: NormalizedTrace, context: TraceStepIndex | None = None) -> list[FailureHypothesis]:
+        context = context or TraceStepIndex.from_trace(trace)
         edits = [step for step in trace.steps if step.action_type == ActionType.EDIT]
         if not edits:
             return []
         if trace.outcome.success is True or trace.outcome.tests_passed is True:
             return []
         final_edit = edits[-1]
-        after_final_edit = steps_after(trace.steps, final_edit)
+        after_final_edit = context.after(final_edit)
         has_verify = any(step.action_type == ActionType.VERIFY for step in after_final_edit)
         if has_verify:
             return []
         has_stop = any(step.action_type == ActionType.STOP for step in after_final_edit)
         terminal_known_failed = trace.outcome.success is False or trace.outcome.tests_passed is False
-        confidence = 0.82 if has_stop else 0.7 if terminal_known_failed else 0.45
-        severity = 0.72 if has_stop or terminal_known_failed else 0.55
+        confidence = (
+            NO_VERIFICATION_TERMINAL_CONFIDENCE
+            if has_stop
+            else NO_VERIFICATION_FAILED_OUTCOME_CONFIDENCE
+            if terminal_known_failed
+            else NO_VERIFICATION_PARTIAL_CONFIDENCE
+        )
+        severity = NO_VERIFICATION_TERMINAL_SEVERITY if has_stop or terminal_known_failed else NO_VERIFICATION_PARTIAL_SEVERITY
         evidence = [
             f"Last edit occurred at step {final_edit.step_id}.",
             "The trace ended or submitted without a VERIFY action after that edit.",
@@ -122,7 +179,7 @@ class NoVerificationDetector(FailureDetector):
 class RepeatedCommandErrorDetector(FailureDetector):
     failure_type = "repeated_command_error"
 
-    def detect(self, trace: NormalizedTrace) -> list[FailureHypothesis]:
+    def detect(self, trace: NormalizedTrace, context: TraceStepIndex | None = None) -> list[FailureHypothesis]:
         failing: dict[str, list[NormalizedStep]] = defaultdict(list)
         for step in trace.steps:
             raw = repeated_error_identity(step)
@@ -137,8 +194,8 @@ class RepeatedCommandErrorDetector(FailureDetector):
                     self.hypothesis(
                         trace,
                         onset,
-                        severity=0.66,
-                        confidence=0.78,
+                        severity=REPEATED_COMMAND_SEVERITY,
+                        confidence=REPEATED_COMMAND_CONFIDENCE,
                         evidence=[
                             f"Failing command/tool was repeated at least twice: {steps[0].command or steps[0].raw_action}.",
                             f"Second failure observed at step {onset.step_id}.",
@@ -152,7 +209,8 @@ class RepeatedCommandErrorDetector(FailureDetector):
 class WrongFileLocalizationDetector(FailureDetector):
     failure_type = "wrong_file_localization"
 
-    def detect(self, trace: NormalizedTrace) -> list[FailureHypothesis]:
+    def detect(self, trace: NormalizedTrace, context: TraceStepIndex | None = None) -> list[FailureHypothesis]:
+        context = context or TraceStepIndex.from_trace(trace)
         hypotheses: list[FailureHypothesis] = []
         mentioned: list[str] = []
         read_paths: set[str] = set()
@@ -168,12 +226,13 @@ class WrongFileLocalizationDetector(FailureDetector):
             target = step.target
             relevant_unread = [path for path in mentioned if path not in read_paths]
             if target and relevant_unread and not same_path_or_basename(target, relevant_unread):
+                contains_test_path = any(is_test_path(path) for path in relevant_unread)
                 hypotheses.append(
                     self.hypothesis(
                         trace,
                         step,
-                        severity=0.7,
-                        confidence=0.66 if not any(is_test_path(path) for path in relevant_unread) else 0.78,
+                        severity=WRONG_FILE_HIGH_SEVERITY,
+                        confidence=WRONG_FILE_HIGH_CONFIDENCE if contains_test_path else WRONG_FILE_BASE_CONFIDENCE,
                         evidence=[
                             f"Earlier output mentioned likely relevant files: {relevant_unread[:5]}.",
                             f"The agent edited {target} before reading those files.",
@@ -181,14 +240,13 @@ class WrongFileLocalizationDetector(FailureDetector):
                         metadata={"edited_target": target, "unread_relevant_paths": relevant_unread[:20]},
                     )
                 )
-                break
 
         if hypotheses:
-            return hypotheses
+            return dedupe_hypotheses_by_target(hypotheses)
 
         first_edit = next((step for step in trace.steps if step.action_type == ActionType.EDIT), None)
         if first_edit:
-            prior = steps_before(trace.steps, first_edit)
+            prior = context.before(first_edit)
             search_paths = [path for step in prior if step.action_type == ActionType.SEARCH for path in paths_for(step)]
             has_test = any(is_test_path(path) for path in search_paths)
             has_source = any(not is_test_path(path) for path in search_paths)
@@ -198,8 +256,8 @@ class WrongFileLocalizationDetector(FailureDetector):
                     self.hypothesis(
                         trace,
                         first_edit,
-                        severity=0.58,
-                        confidence=0.58,
+                        severity=WRONG_FILE_LOW_SEVERITY,
+                        confidence=WRONG_FILE_LOW_CONFIDENCE,
                         evidence=[
                             "Search output included both source and test files.",
                             "The first edit happened before a test file was read.",
@@ -213,7 +271,7 @@ class WrongFileLocalizationDetector(FailureDetector):
 class IgnoredToolErrorDetector(FailureDetector):
     failure_type = "ignored_tool_error"
 
-    def detect(self, trace: NormalizedTrace) -> list[FailureHypothesis]:
+    def detect(self, trace: NormalizedTrace, context: TraceStepIndex | None = None) -> list[FailureHypothesis]:
         for index, step in enumerate(trace.steps):
             if not step.is_error:
                 continue
@@ -225,8 +283,8 @@ class IgnoredToolErrorDetector(FailureDetector):
                     self.hypothesis(
                         trace,
                         next_step,
-                        severity=0.68,
-                        confidence=0.74,
+                        severity=IGNORED_TOOL_ERROR_SEVERITY,
+                        confidence=IGNORED_TOOL_ERROR_CONFIDENCE,
                         evidence=[
                             f"Step {step.step_id} returned an error: {step.error_signature or 'unknown error'}.",
                             f"The next meaningful step was {next_step.action_type} at step {next_step.step_id}.",
@@ -240,7 +298,7 @@ class IgnoredToolErrorDetector(FailureDetector):
 class TestEditingRewardHackDetector(FailureDetector):
     failure_type = "test_editing_reward_hack"
 
-    def detect(self, trace: NormalizedTrace) -> list[FailureHypothesis]:
+    def detect(self, trace: NormalizedTrace, context: TraceStepIndex | None = None) -> list[FailureHypothesis]:
         if task_allows_test_updates(trace):
             return []
         for step in trace.steps:
@@ -249,8 +307,8 @@ class TestEditingRewardHackDetector(FailureDetector):
                     self.hypothesis(
                         trace,
                         step,
-                        severity=0.86,
-                        confidence=0.72,
+                        severity=TEST_EDIT_REWARD_HACK_SEVERITY,
+                        confidence=TEST_EDIT_REWARD_HACK_CONFIDENCE,
                         evidence=[
                             f"The agent edited a test file at step {step.step_id}: {step.target or 'unknown test target'}.",
                             "The task prompt did not explicitly ask for test updates.",
@@ -264,7 +322,7 @@ class TestEditingRewardHackDetector(FailureDetector):
 class OverbroadPatchDetector(FailureDetector):
     failure_type = "overbroad_patch"
 
-    def detect(self, trace: NormalizedTrace) -> list[FailureHypothesis]:
+    def detect(self, trace: NormalizedTrace, context: TraceStepIndex | None = None) -> list[FailureHypothesis]:
         edited: list[str] = []
         edit_steps: list[NormalizedStep] = []
         for step in trace.steps:
@@ -279,14 +337,14 @@ class OverbroadPatchDetector(FailureDetector):
         if len(edited) < 4:
             return []
         categories = {path_category(path) for path in edited}
-        severity = 0.84 if len(categories) >= 3 else 0.7
+        severity = OVERBROAD_PATCH_HIGH_SEVERITY if len(categories) >= 3 else OVERBROAD_PATCH_BASE_SEVERITY
         onset = edit_steps[min(3, len(edit_steps) - 1)]
         return [
             self.hypothesis(
                 trace,
                 onset,
                 severity=severity,
-                confidence=0.7,
+                confidence=OVERBROAD_PATCH_CONFIDENCE,
                 evidence=[
                     f"The agent edited {len(edited)} unique files.",
                     f"Edited files span categories: {sorted(categories)}.",
@@ -299,14 +357,15 @@ class OverbroadPatchDetector(FailureDetector):
 class SubmitAfterFailureDetector(FailureDetector):
     failure_type = "submit_after_failure"
 
-    def detect(self, trace: NormalizedTrace) -> list[FailureHypothesis]:
+    def detect(self, trace: NormalizedTrace, context: TraceStepIndex | None = None) -> list[FailureHypothesis]:
+        context = context or TraceStepIndex.from_trace(trace)
         verify_steps = [step for step in trace.steps if step.action_type == ActionType.VERIFY]
         if not verify_steps:
             return []
         last_verify = verify_steps[-1]
         if not last_verify.is_error:
             return []
-        after = steps_after(trace.steps, last_verify)
+        after = context.after(last_verify)
         stop = next((step for step in after if step.action_type == ActionType.STOP), None)
         if not stop:
             return []
@@ -319,8 +378,8 @@ class SubmitAfterFailureDetector(FailureDetector):
             self.hypothesis(
                 trace,
                 stop,
-                severity=0.82,
-                confidence=0.86,
+                severity=SUBMIT_AFTER_FAILURE_SEVERITY,
+                confidence=SUBMIT_AFTER_FAILURE_CONFIDENCE,
                 evidence=[
                     f"The last VERIFY at step {last_verify.step_id} failed: {last_verify.error_signature or 'unknown failure'}.",
                     f"The agent stopped at step {stop.step_id} without a later edit and successful verification.",
@@ -344,26 +403,34 @@ DEFAULT_DETECTORS: list[FailureDetector] = [
 
 def run_detectors(trace: NormalizedTrace, detectors: list[FailureDetector] | None = None) -> list[FailureHypothesis]:
     hypotheses: list[FailureHypothesis] = []
+    context = TraceStepIndex.from_trace(trace)
     for detector in detectors or DEFAULT_DETECTORS:
-        hypotheses.extend(detector.detect(trace))
+        hypotheses.extend(detector.detect(trace, context))
     return hypotheses
 
 
 def steps_before(steps: list[NormalizedStep], marker: NormalizedStep) -> list[NormalizedStep]:
-    return steps[: steps.index(marker)]
+    positions = {step.step_id: index for index, step in enumerate(steps)}
+    return steps[: positions.get(marker.step_id, 0)]
 
 
 def steps_after(steps: list[NormalizedStep], marker: NormalizedStep) -> list[NormalizedStep]:
-    return steps[steps.index(marker) + 1 :]
+    positions = {step.step_id: index for index, step in enumerate(steps)}
+    return steps[positions.get(marker.step_id, len(steps)) + 1 :]
 
 
 def paths_for(step: NormalizedStep) -> list[str]:
-    paths = list(step.metadata.get("paths") or [])
-    for value in (step.target, step.command, step.observation, step.raw_step.diff, step.raw_step.content):
-        for path in extract_paths_from_text(value):
-            if path not in paths:
-                paths.append(path)
-    return paths
+    return step.extracted_paths()
+
+
+def dedupe_hypotheses_by_target(hypotheses: list[FailureHypothesis]) -> list[FailureHypothesis]:
+    by_target: dict[str, FailureHypothesis] = {}
+    for hypothesis in hypotheses:
+        target = str(hypothesis.metadata.get("edited_target") or hypothesis.onset_step_id or "")
+        current = by_target.get(target)
+        if current is None or (hypothesis.confidence, hypothesis.severity) > (current.confidence, current.severity):
+            by_target[target] = hypothesis
+    return list(by_target.values())
 
 
 def normalize_command(command: str) -> str:
@@ -453,7 +520,7 @@ def task_allows_test_updates(trace: NormalizedTrace) -> bool:
 
 
 def task_is_scaffold_or_test_authoring(trace: NormalizedTrace) -> bool:
-    text = " ".join(part for part in (trace.task.description, trace.task.prompt) if part).lower()
+    text = " ".join(part for part in (trace.task.description, trace.task.prompt) if part).lower()[:SCAFFOLD_TASK_SCAN_CHARS]
     phrases = (
         "create a tiny toy",
         "toy package",
@@ -468,7 +535,8 @@ def task_is_scaffold_or_test_authoring(trace: NormalizedTrace) -> bool:
         "create a package",
         "create/add/build",
     )
-    return any(phrase in text for phrase in phrases)
+    starters = r"(^|[\n.;:]\s*|\b(task|goal|prompt|please|first|start by)\s*:?\s+)"
+    return any(re.search(starters + re.escape(phrase), text) for phrase in phrases)
 
 
 def path_category(path: str) -> str:

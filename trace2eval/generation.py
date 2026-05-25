@@ -73,7 +73,7 @@ def generate_eval_cases(
 def rule_for_failure(failure_type: str) -> str:
     return {
         "premature_edit": "first_edit_after_test_read_or_verify",
-        "wrong_file_localization": "first_edit_after_test_read_or_verify",
+        "wrong_file_localization": "read_mentioned_paths_before_edit",
         "no_verification": "verify_after_last_edit_before_stop",
         "repeated_command_error": "no_repeated_identical_failing_command",
         "ignored_tool_error": "recover_after_tool_error",
@@ -107,6 +107,13 @@ def derive_task_constraints(causal_slice: CausalSlice) -> dict[str, Any]:
     for observation in causal_slice.previous_observations:
         add_paths(candidate_paths, extract_paths_from_text(observation))
 
+    mentioned_paths: list[str] = []
+    for key in ("unread_relevant_paths", "ignored_test_paths", "search_paths"):
+        add_paths(mentioned_paths, hypothesis_metadata.get(key))
+    if not mentioned_paths:
+        for evidence in hypothesis.get("evidence") or []:
+            add_paths(mentioned_paths, extract_paths_from_text(str(evidence)))
+
     test_files = sorted({path for path in candidate_paths if is_test_path(path)})
     source_files = sorted({path for path in candidate_paths if is_source_path(path)})
     forbidden = hypothesis_metadata.get("edited_target")
@@ -116,6 +123,7 @@ def derive_task_constraints(causal_slice: CausalSlice) -> dict[str, Any]:
     return {
         "expected_relevant_test_files": test_files,
         "expected_relevant_source_files": sorted(source_files),
+        "expected_mentioned_paths": sorted(set(mentioned_paths)),
         "forbidden_premature_target": forbidden if isinstance(forbidden, str) else None,
         "required_observation_paths": sorted(set(test_files + source_files)),
     }

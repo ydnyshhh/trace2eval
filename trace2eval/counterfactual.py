@@ -379,7 +379,10 @@ def index_for_onset_or_first(trace: NormalizedTrace, failure: FailureHypothesis,
 
 
 def index_after(trace: NormalizedTrace, marker: NormalizedStep) -> int:
-    return trace.steps.index(marker) + 1
+    for index, step in enumerate(trace.steps):
+        if step.step_id == marker.step_id:
+            return index + 1
+    return len(trace.steps)
 
 
 def first_error_before_onset(trace: NormalizedTrace, failure: FailureHypothesis) -> int | None:

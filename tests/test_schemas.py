@@ -48,6 +48,22 @@ def test_step_ids_are_canonicalized_to_strings() -> None:
     assert causal_slice.included_step_ids == ["1", "2"]
 
 
+def test_normalized_step_extracted_paths_are_canonical_source() -> None:
+    step = NormalizedStep(
+        step_id=1,
+        raw_step=RawStep(
+            step_id=1,
+            content="See tests/test_parser.py",
+            diff="--- a/src/parser.py\n+++ b/src/parser.py",
+        ),
+        target="src/other.py",
+        command="cat README.md",
+        metadata={"paths": ["pyproject.toml"]},
+    )
+
+    assert step.extracted_paths() == ["pyproject.toml", "src/other.py", "README.md", "tests/test_parser.py", "src/parser.py"]
+
+
 def test_loaders_reject_missing_schema_version(tmp_path) -> None:
     path = tmp_path / "raw.json"
     path.write_text('{"trace_id": "trace", "source": "generic_json", "steps": []}', encoding="utf-8")

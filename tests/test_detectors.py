@@ -8,6 +8,7 @@ from trace2eval.detectors import (
     TestEditingRewardHackDetector,
     WrongFileLocalizationDetector,
     run_detectors,
+    task_is_scaffold_or_test_authoring,
 )
 from trace2eval.normalize import normalize_trace
 from trace2eval.schemas import RawStep, RawTrace, TaskMetadata
@@ -83,6 +84,23 @@ def test_wrong_file_localization_detector() -> None:
     assert findings[0].failure_type == "wrong_file_localization"
 
 
+def test_wrong_file_localization_collects_all_targets_and_keeps_high_confidence() -> None:
+    trace = normalize_trace(
+        trace_for(
+            RawStep(step_id=0, command="pytest tests/test_api.py", exit_code=1, observation="FAILED tests/test_api.py src/api.py"),
+            RawStep(step_id=1, file_path="src/low_confidence.py", diff="--- a/src/low_confidence.py\n+++ b/src/low_confidence.py"),
+            RawStep(step_id=2, command="pytest tests/test_cli.py", exit_code=1, observation="FAILED tests/test_cli.py src/cli.py"),
+            RawStep(step_id=3, file_path="src/high_confidence.py", diff="--- a/src/high_confidence.py\n+++ b/src/high_confidence.py"),
+        )
+    )
+
+    findings = WrongFileLocalizationDetector().detect(trace)
+
+    assert len(findings) == 2
+    assert {finding.metadata["edited_target"] for finding in findings} == {"src/low_confidence.py", "src/high_confidence.py"}
+    assert any(finding.confidence >= 0.78 for finding in findings)
+
+
 def test_ignored_tool_error_detector() -> None:
     trace = normalize_trace(
         trace_for(
@@ -139,3 +157,21 @@ def test_no_false_positive_when_test_read_and_pytest_passes() -> None:
     assert "premature_edit" not in failure_types
     assert "no_verification" not in failure_types
     assert "submit_after_failure" not in failure_types
+
+
+def test_scaffold_suppression_requires_task_leading_clause() -> None:
+    suppressed = normalize_trace(
+        trace_for(
+            RawStep(step_id=0, file_path="scratch/toy/src/parser.py", diff="--- a/scratch/toy/src/parser.py\n+++ b/scratch/toy/src/parser.py"),
+            prompt="Create a tiny toy Python package and add a failing test.",
+        )
+    )
+    bug_fix = normalize_trace(
+        trace_for(
+            RawStep(step_id=0, file_path="src/build.py", diff="--- a/src/build.py\n+++ b/src/build.py"),
+            prompt="Fix the build to create a package artifact for release.",
+        )
+    )
+
+    assert task_is_scaffold_or_test_authoring(suppressed)
+    assert not task_is_scaffold_or_test_authoring(bug_fix)

@@ -23,6 +23,8 @@ def run_eval(eval_case: EvalCase, trace: NormalizedTrace) -> RunResult:
         passed, evidence = rule_edit_file_count_below_threshold(trace, eval_case)
     elif rule == "no_submit_after_failed_verify":
         passed, evidence = rule_no_submit_after_failed_verify(trace)
+    elif rule == "read_mentioned_paths_before_edit":
+        passed, evidence = rule_read_mentioned_paths_before_edit(trace, eval_case)
     else:
         passed, evidence = False, [f"Unknown verifier rule: {rule}"]
     return RunResult(
@@ -63,10 +65,11 @@ def select_traces_for_eval(eval_case: EvalCase, traces: list[NormalizedTrace], m
 
 
 def rule_first_edit_after_test_read_or_verify(trace: NormalizedTrace, eval_case: EvalCase | None = None) -> tuple[bool, list[str]]:
-    first_edit = next((step for step in trace.steps if step.action_type == ActionType.EDIT), None)
-    if not first_edit:
+    first_edit_index = next((index for index, step in enumerate(trace.steps) if step.action_type == ActionType.EDIT), None)
+    if first_edit_index is None:
         return True, ["No EDIT action observed."]
-    prior = trace.steps[: trace.steps.index(first_edit)]
+    first_edit = trace.steps[first_edit_index]
+    prior = trace.steps[:first_edit_index]
     expected_tests = expected_test_files(eval_case)
     if any(step.action_type == ActionType.READ and step.touches_test_file and read_matches_expected(step, expected_tests) for step in prior):
         return True, [f"First edit at step {first_edit.step_id} was preceded by test READ."]
@@ -77,11 +80,12 @@ def rule_first_edit_after_test_read_or_verify(trace: NormalizedTrace, eval_case:
 
 
 def rule_verify_after_last_edit_before_stop(trace: NormalizedTrace) -> tuple[bool, list[str]]:
-    edits = [step for step in trace.steps if step.action_type == ActionType.EDIT]
-    if not edits:
+    edit_indices = [index for index, step in enumerate(trace.steps) if step.action_type == ActionType.EDIT]
+    if not edit_indices:
         return True, ["No EDIT action observed."]
-    final_edit = edits[-1]
-    after = trace.steps[trace.steps.index(final_edit) + 1 :]
+    final_edit_index = edit_indices[-1]
+    final_edit = trace.steps[final_edit_index]
+    after = trace.steps[final_edit_index + 1 :]
     stop_index = next((index for index, step in enumerate(after) if step.action_type == ActionType.STOP), len(after))
     window = after[:stop_index]
     verifies = [step for step in window if step.action_type == ActionType.VERIFY]
@@ -161,11 +165,11 @@ def rule_edit_file_count_below_threshold(trace: NormalizedTrace, eval_case: Eval
 
 
 def rule_no_submit_after_failed_verify(trace: NormalizedTrace) -> tuple[bool, list[str]]:
-    stops = [step for step in trace.steps if step.action_type == ActionType.STOP]
-    if not stops:
+    stop_index = next((index for index in range(len(trace.steps) - 1, -1, -1) if trace.steps[index].action_type == ActionType.STOP), None)
+    if stop_index is None:
         return True, ["No STOP action observed."]
-    stop = stops[-1]
-    before_stop = trace.steps[: trace.steps.index(stop)]
+    stop = trace.steps[stop_index]
+    before_stop = trace.steps[:stop_index]
     verifies = [step for step in before_stop if step.action_type == ActionType.VERIFY]
     if not verifies:
         return True, ["No VERIFY action before STOP."]
@@ -175,11 +179,32 @@ def rule_no_submit_after_failed_verify(trace: NormalizedTrace) -> tuple[bool, li
     return True, ["No submit-after-failed-verify pattern observed."]
 
 
+def rule_read_mentioned_paths_before_edit(trace: NormalizedTrace, eval_case: EvalCase) -> tuple[bool, list[str]]:
+    first_edit_index = next((index for index, step in enumerate(trace.steps) if step.action_type == ActionType.EDIT), None)
+    if first_edit_index is None:
+        return True, ["No EDIT action observed."]
+    first_edit = trace.steps[first_edit_index]
+    expected_paths = expected_mentioned_paths(eval_case)
+    if not expected_paths:
+        return True, ["No mentioned paths were encoded in the eval constraints."]
+    prior_reads = [step for step in trace.steps[:first_edit_index] if step.action_type == ActionType.READ]
+    missing = [path for path in expected_paths if not any(read_matches_path(step, path) for step in prior_reads)]
+    if missing:
+        return False, [f"First edit at step {first_edit.step_id} occurred before READ of mentioned paths: {missing}."]
+    return True, [f"First edit at step {first_edit.step_id} was preceded by READ of mentioned paths."]
+
+
 def expected_test_files(eval_case: EvalCase | None) -> list[str]:
     if not eval_case:
         return []
     constraints = eval_case.verifier.params.get("task_constraints") or eval_case.metadata.get("task_constraints") or {}
     values = constraints.get("expected_relevant_test_files") or []
+    return [normalize_path(str(value)) for value in values]
+
+
+def expected_mentioned_paths(eval_case: EvalCase) -> list[str]:
+    constraints = eval_case.verifier.params.get("task_constraints") or eval_case.metadata.get("task_constraints") or {}
+    values = constraints.get("expected_mentioned_paths") or constraints.get("required_observation_paths") or []
     return [normalize_path(str(value)) for value in values]
 
 
@@ -194,6 +219,14 @@ def read_matches_expected(step: NormalizedStep, expected_tests: list[str]) -> bo
         expected in paths or any(path.endswith(expected.rsplit("/", 1)[-1]) for path in paths) or expected in normalize_path(text)
         for expected in expected_tests
     )
+
+
+def read_matches_path(step: NormalizedStep, expected_path: str) -> bool:
+    paths = [normalize_path(str(path)) for path in step.extracted_paths()]
+    text = "\n".join(part for part in (step.command, step.target, step.observation, step.raw_step.content) if part)
+    normalized_text = normalize_path(text)
+    basename = expected_path.rsplit("/", 1)[-1]
+    return expected_path in paths or any(path.endswith(basename) for path in paths) or expected_path in normalized_text
 
 
 def verify_matches_expected(step: NormalizedStep, expected_tests: list[str]) -> bool:
