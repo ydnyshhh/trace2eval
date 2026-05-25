@@ -193,6 +193,19 @@ class RunResult(Trace2EvalModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class CounterfactualReplay(Trace2EvalModel):
+    schema_version: str = SCHEMA_VERSION
+    source_trace_id: str
+    counterfactual_trace: NormalizedTrace
+    failure: FailureHypothesis
+    eval_case: EvalCase
+    original_result: RunResult
+    counterfactual_result: RunResult
+    intervention: dict[str, Any] = Field(default_factory=dict)
+    flipped: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class Report(Trace2EvalModel):
     schema_version: str = SCHEMA_VERSION
     total_traces: int = 0

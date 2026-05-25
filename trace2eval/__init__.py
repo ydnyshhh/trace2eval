@@ -3,6 +3,7 @@
 from trace2eval.schemas import (
     ActionType,
     CausalSlice,
+    CounterfactualReplay,
     EvalCase,
     EvalVerifier,
     FailureHypothesis,
@@ -19,6 +20,7 @@ from trace2eval.schemas import (
 __all__ = [
     "ActionType",
     "CausalSlice",
+    "CounterfactualReplay",
     "EvalCase",
     "EvalVerifier",
     "FailureHypothesis",

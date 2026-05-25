@@ -67,6 +67,28 @@ def test_replay_command_prints_failure_story() -> None:
     assert "failed as expected" in result.output
 
 
+def test_counterfactual_command_prints_and_writes_replay(tmp_path) -> None:
+    out_path = tmp_path / "counterfactual.json"
+    result = runner.invoke(
+        app,
+        [
+            "counterfactual",
+            "--trace",
+            "examples/traces/premature_edit_codex_like.json",
+            "--failure",
+            "premature_edit",
+            "--out",
+            str(out_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert out_path.exists()
+    assert "Counterfactual Replay" in result.output
+    assert "insert_read_before_edit" in result.output
+    assert "flipped: yes" in result.output
+
+
 def test_index_and_query_commands_run_duckdb_smoke(tmp_path) -> None:
     db_path = tmp_path / "trace2eval.duckdb"
 

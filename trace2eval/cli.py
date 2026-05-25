@@ -19,6 +19,7 @@ from trace2eval.capture import (
     discover_codex_rollouts,
     install_claude_hook,
 )
+from trace2eval.counterfactual import print_counterfactual_replay, run_counterfactual_replay
 from trace2eval.doctor import run_doctor_checks
 from trace2eval.generation import generate_eval_cases
 from trace2eval.io import (
@@ -284,6 +285,25 @@ def replay_command(
     print_replay_story(trace, selected_failure, eval_case, result, console=console)
 
 
+@app.command("counterfactual")
+def counterfactual_command(
+    trace_path: Annotated[Path, typer.Option("--trace", help="RawTrace or NormalizedTrace JSON file/directory.")],
+    failures_path: Annotated[Path | None, typer.Option("--failures", help="Optional failure hypotheses JSONL.")] = None,
+    failure: Annotated[str, typer.Option("--failure", help="Failure selector: primary, failure_type, step id, or type@step.")] = "primary",
+    trace_id: Annotated[str | None, typer.Option("--trace-id", help="Trace id when --trace points to a directory.")] = None,
+    out: Annotated[Path | None, typer.Option("--out", help="Optional JSON/YAML output file or directory.")] = None,
+) -> None:
+    try:
+        trace = load_replay_trace(trace_path, trace_id)
+        failures = load_failure_hypotheses(failures_path) if failures_path else None
+        replay = run_counterfactual_replay(trace, failures, failure_selector=failure)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    output_path = write_counterfactual_output(replay, out) if out else None
+    print_counterfactual_replay(replay, console=console, output_path=output_path)
+
+
 @app.command("index")
 def index_command(
     traces_path: Annotated[Path, typer.Option("--traces", help="RawTrace or NormalizedTrace JSON file or directory.")],
@@ -459,6 +479,18 @@ def load_any_normalized_traces(path: Path):
         return load_normalized_traces(path)
     except Exception:
         return [normalize_trace(trace) for trace in load_raw_traces(path)]
+
+
+def write_counterfactual_output(replay, out: Path) -> Path:
+    output_path = out
+    if out.suffix.lower() not in {".json", ".yaml", ".yml"}:
+        ensure_dir(out)
+        output_path = out / f"{slugify(replay.counterfactual_trace.trace_id)}.json"
+    if output_path.suffix.lower() in {".yaml", ".yml"}:
+        write_yaml(output_path, replay)
+    else:
+        write_json(output_path, replay)
+    return output_path
 
 
 def print_index_summary(summary: IndexSummary) -> None:
