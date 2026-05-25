@@ -3,13 +3,20 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SCHEMA_VERSION = "0.1.0"
 
 
 class Trace2EvalModel(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="ignore")
+
+    @field_validator("schema_version", mode="before", check_fields=False)
+    @classmethod
+    def validate_schema_version_value(cls, value: Any) -> str:
+        if str(value) != SCHEMA_VERSION:
+            raise ValueError(f"Unsupported Trace2Eval schema_version {value!r}; expected {SCHEMA_VERSION!r}.")
+        return str(value)
 
 
 class TraceSource(StrEnum):
@@ -75,7 +82,9 @@ class OutcomeMetadata(Trace2EvalModel):
 
 
 class RawStep(Trace2EvalModel):
-    step_id: int | str
+    model_config = ConfigDict(extra="allow")
+
+    step_id: str
     timestamp: str | None = None
     event_type: str | None = None
     role: str | None = None
@@ -90,8 +99,15 @@ class RawStep(Trace2EvalModel):
     status: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("step_id", mode="before")
+    @classmethod
+    def normalize_step_id(cls, value: Any) -> str:
+        return canonical_step_id(value)
+
 
 class RawTrace(Trace2EvalModel):
+    model_config = ConfigDict(extra="allow")
+
     schema_version: str = SCHEMA_VERSION
     trace_id: str
     source: TraceSource | str
@@ -103,7 +119,7 @@ class RawTrace(Trace2EvalModel):
 
 
 class NormalizedStep(Trace2EvalModel):
-    step_id: int | str
+    step_id: str
     raw_step: RawStep
     action_type: ActionType = ActionType.UNKNOWN
     phase: Phase = Phase.UNKNOWN
@@ -119,6 +135,11 @@ class NormalizedStep(Trace2EvalModel):
     is_patch: bool = False
     is_final: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("step_id", mode="before")
+    @classmethod
+    def normalize_step_id(cls, value: Any) -> str:
+        return canonical_step_id(value)
 
 
 class NormalizedTrace(Trace2EvalModel):
@@ -136,28 +157,47 @@ class FailureHypothesis(Trace2EvalModel):
     schema_version: str = SCHEMA_VERSION
     trace_id: str
     failure_type: str
-    onset_step_id: int | str | None = None
+    onset_step_id: str | None = None
     severity: float = 0.5
     confidence: float = 0.5
     evidence: list[str] = Field(default_factory=list)
     detector: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("onset_step_id", mode="before")
+    @classmethod
+    def normalize_onset_step_id(cls, value: Any) -> str | None:
+        return canonical_step_id_or_none(value)
+
 
 class CausalSlice(Trace2EvalModel):
     schema_version: str = SCHEMA_VERSION
     trace_id: str
     failure_type: str
-    onset_step_id: int | str | None = None
+    onset_step_id: str | None = None
     task_description: str | None = None
     previous_observations: list[str] = Field(default_factory=list)
-    included_step_ids: list[int | str] = Field(default_factory=list)
+    included_step_ids: list[str] = Field(default_factory=list)
     bad_action_summary: str
     expected_behavior: str
     failure_condition: str
     success_condition: str
     available_tools: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("onset_step_id", mode="before")
+    @classmethod
+    def normalize_onset_step_id(cls, value: Any) -> str | None:
+        return canonical_step_id_or_none(value)
+
+    @field_validator("included_step_ids", mode="before")
+    @classmethod
+    def normalize_included_step_ids(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [canonical_step_id(item) for item in value]
+        return [canonical_step_id(value)]
 
 
 class EvalVerifier(Trace2EvalModel):
@@ -233,3 +273,15 @@ class BenchmarkCase(Trace2EvalModel):
     generated_eval_useful: bool | None = None
     notes: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+def canonical_step_id(value: Any) -> str:
+    if value is None:
+        raise ValueError("step_id cannot be None")
+    return str(value)
+
+
+def canonical_step_id_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    return canonical_step_id(value)

@@ -18,6 +18,7 @@ from trace2eval.io import (
     load_run_results,
     model_dump,
     read_json,
+    validate_model_data,
 )
 from trace2eval.normalize import normalize_trace
 from trace2eval.schemas import NormalizedTrace, RawTrace
@@ -318,9 +319,9 @@ def load_index_traces(path: Path) -> list[NormalizedTrace]:
     for file in iter_files(path, (".json",)):
         data = read_json(file)
         try:
-            traces.append(NormalizedTrace.model_validate(data))
+            traces.append(validate_model_data(data, NormalizedTrace, file))
         except ValidationError:
-            traces.append(normalize_trace(RawTrace.model_validate(data)))
+            traces.append(normalize_trace(validate_model_data(data, RawTrace, file)))
     return traces
 
 

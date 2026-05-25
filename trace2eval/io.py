@@ -9,7 +9,14 @@ import orjson
 import yaml
 from pydantic import BaseModel
 
-from trace2eval.schemas import EvalCase, FailureHypothesis, NormalizedTrace, RawTrace, RunResult
+from trace2eval.schemas import (
+    SCHEMA_VERSION,
+    EvalCase,
+    FailureHypothesis,
+    NormalizedTrace,
+    RawTrace,
+    RunResult,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -71,7 +78,25 @@ def write_jsonl(path: Path, records: Iterable[Any]) -> None:
 
 
 def read_model(path: Path, model_type: type[T]) -> T:
-    return model_type.model_validate(read_json(path))
+    return validate_model_data(read_json(path), model_type, path)
+
+
+def validate_model_data(data: Any, model_type: type[T], path: Path, *, index: int | None = None) -> T:
+    validate_schema_version(data, model_type, path, index=index)
+    return model_type.model_validate(data)
+
+
+def validate_schema_version(data: Any, model_type: type[BaseModel], path: Path, *, index: int | None = None) -> None:
+    location = f"{path}" if index is None else f"{path} record {index}"
+    if not isinstance(data, dict):
+        raise ValueError(f"{location}: expected object for {model_type.__name__}, got {type(data).__name__}.")
+    version = data.get("schema_version")
+    if version is None:
+        raise ValueError(f"{location}: missing schema_version for {model_type.__name__}; expected {SCHEMA_VERSION}.")
+    if str(version) != SCHEMA_VERSION:
+        raise ValueError(
+            f"{location}: unsupported schema_version {version!r} for {model_type.__name__}; expected {SCHEMA_VERSION!r}."
+        )
 
 
 def read_yaml(path: Path) -> Any:
@@ -106,18 +131,18 @@ def load_failure_hypotheses(path: Path) -> list[FailureHypothesis]:
     if not path.exists():
         return []
     if path.suffix.lower() == ".jsonl":
-        return [FailureHypothesis.model_validate(item) for item in iter_jsonl(path)]
+        return [validate_model_data(item, FailureHypothesis, path, index=index) for index, item in enumerate(iter_jsonl(path), start=1)]
     data = read_json(path)
     if isinstance(data, list):
-        return [FailureHypothesis.model_validate(item) for item in data]
-    return [FailureHypothesis.model_validate(data)]
+        return [validate_model_data(item, FailureHypothesis, path, index=index) for index, item in enumerate(data, start=1)]
+    return [validate_model_data(data, FailureHypothesis, path)]
 
 
 def load_eval_cases(path: Path) -> list[EvalCase]:
     cases: list[EvalCase] = []
     for file in iter_files(path, (".yaml", ".yml", ".json")):
         data = read_yaml(file) if file.suffix.lower() in {".yaml", ".yml"} else read_json(file)
-        cases.append(EvalCase.model_validate(data))
+        cases.append(validate_model_data(data, EvalCase, file))
     return cases
 
 
@@ -125,8 +150,8 @@ def load_run_results(path: Path) -> list[RunResult]:
     if not path.exists():
         return []
     if path.suffix.lower() == ".jsonl":
-        return [RunResult.model_validate(item) for item in iter_jsonl(path)]
+        return [validate_model_data(item, RunResult, path, index=index) for index, item in enumerate(iter_jsonl(path), start=1)]
     data = read_json(path)
     if isinstance(data, list):
-        return [RunResult.model_validate(item) for item in data]
-    return [RunResult.model_validate(data)]
+        return [validate_model_data(item, RunResult, path, index=index) for index, item in enumerate(data, start=1)]
+    return [validate_model_data(data, RunResult, path)]

@@ -32,7 +32,7 @@ def test_premature_edit_detector() -> None:
     findings = PrematureEditDetector().detect(trace)
     assert findings
     assert findings[0].failure_type == "premature_edit"
-    assert findings[0].onset_step_id == 1
+    assert findings[0].onset_step_id == "1"
 
 
 def test_no_verification_detector() -> None:
@@ -68,7 +68,7 @@ def test_repeated_command_error_detector() -> None:
     )
     findings = RepeatedCommandErrorDetector().detect(trace)
     assert findings
-    assert findings[0].onset_step_id == 1
+    assert findings[0].onset_step_id == "1"
 
 
 def test_wrong_file_localization_detector() -> None:

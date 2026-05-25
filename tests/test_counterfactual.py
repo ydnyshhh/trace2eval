@@ -136,10 +136,10 @@ def test_counterfactual_uses_numeric_step_ids_or_preserves_original_step_id() ->
     assert_step_ids_are_numeric_and_sequential(replay.counterfactual_trace)
     source_ids = [step.metadata["source_step_id"] for step in replay.counterfactual_trace.steps]
     assert "cf-read-test" in source_ids
-    assert 3 in source_ids
+    assert "3" in source_ids
 
 
 def assert_step_ids_are_numeric_and_sequential(trace: NormalizedTrace) -> None:
-    assert [step.step_id for step in trace.steps] == list(range(len(trace.steps)))
-    assert all(isinstance(step.step_id, int) for step in trace.steps)
-    assert [step.raw_step.step_id for step in trace.steps] == list(range(len(trace.steps)))
+    expected_ids = [str(index) for index in range(len(trace.steps))]
+    assert [step.step_id for step in trace.steps] == expected_ids
+    assert [step.raw_step.step_id for step in trace.steps] == expected_ids

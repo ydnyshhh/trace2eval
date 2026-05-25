@@ -357,8 +357,8 @@ def renumber_counterfactual_steps(trace: NormalizedTrace, intervention: dict[str
         step.metadata["source_step_id"] = old_step_id
         step.raw_step.metadata["counterfactual_step_id"] = new_id
         step.raw_step.metadata["source_step_id"] = old_raw_step_id
-        step.step_id = new_id
-        step.raw_step.step_id = new_id
+        step.step_id = str(new_id)
+        step.raw_step.step_id = str(new_id)
     intervention["step_id_map"] = old_to_new
     intervention["inserted_step_ids"] = remap_step_ids(intervention.get("inserted_step_ids"), old_to_new)
     intervention["modified_step_ids"] = remap_step_ids(intervention.get("modified_step_ids"), old_to_new)

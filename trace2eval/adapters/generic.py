@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from trace2eval.io import iter_files, read_json
+from trace2eval.io import iter_files, read_json, validate_model_data
 from trace2eval.schemas import RawTrace
 
 
@@ -14,7 +14,7 @@ class GenericJSONAdapter:
         for file in iter_files(path, (".json",)):
             data = read_json(file)
             if isinstance(data, list):
-                traces.extend(RawTrace.model_validate(item) for item in data)
+                traces.extend(validate_model_data(item, RawTrace, file, index=index) for index, item in enumerate(data, start=1))
             else:
-                traces.append(RawTrace.model_validate(data))
+                traces.append(validate_model_data(data, RawTrace, file))
         return traces

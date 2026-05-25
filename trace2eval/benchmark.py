@@ -8,7 +8,7 @@ from trace2eval.adapters import (
     CodexJSONLAdapter,
     GenericJSONAdapter,
 )
-from trace2eval.io import iter_files, read_yaml
+from trace2eval.io import iter_files, read_yaml, validate_model_data
 from trace2eval.mining import mine_trace
 from trace2eval.normalize import normalize_trace
 from trace2eval.schemas import BenchmarkCase, NormalizedTrace, RawTrace
@@ -19,7 +19,7 @@ def load_benchmark_cases(fixtures: Path) -> list[BenchmarkCase]:
     for file in iter_files(fixtures, (".yaml", ".yml")):
         data = read_yaml(file)
         if isinstance(data, dict) and "trace_path" in data and "expected_failure_type" in data:
-            case = BenchmarkCase.model_validate(data)
+            case = validate_model_data(data, BenchmarkCase, file)
             trace_path = Path(case.trace_path)
             if not trace_path.is_absolute():
                 case.trace_path = str((file.parent / trace_path).resolve())
