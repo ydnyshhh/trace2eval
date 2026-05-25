@@ -20,6 +20,12 @@ def test_counterfactual_premature_edit_flips_eval() -> None:
     assert not replay.original_result.passed
     assert replay.counterfactual_result.passed
     assert replay.flipped
+    assert [step.step_id for step in replay.counterfactual_trace.steps] == list(range(len(replay.counterfactual_trace.steps)))
+    assert all(isinstance(step.step_id, int) for step in replay.counterfactual_trace.steps)
+    inserted_step_id = replay.intervention["inserted_step_ids"][0]
+    inserted_step = replay.counterfactual_trace.steps[inserted_step_id]
+    assert inserted_step.metadata["synthetic_step_id"] == "cf-read-test"
+    assert inserted_step.metadata["source_step_id"] == "cf-read-test"
     first_edit_index = next(index for index, step in enumerate(replay.counterfactual_trace.steps) if step.action_type == ActionType.EDIT)
     assert any(
         step.action_type == ActionType.READ and step.touches_test_file
@@ -36,4 +42,5 @@ def test_counterfactual_no_verification_flips_eval() -> None:
     assert not replay.original_result.passed
     assert replay.counterfactual_result.passed
     assert replay.flipped
+    assert [step.step_id for step in replay.counterfactual_trace.steps] == list(range(len(replay.counterfactual_trace.steps)))
     assert any(step.action_type == ActionType.VERIFY for step in replay.counterfactual_trace.steps)

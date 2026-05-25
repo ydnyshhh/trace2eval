@@ -102,6 +102,7 @@ def build_counterfactual_trace(
     else:
         intervention = intervene_with_pre_edit_test_read(counterfactual, failure, eval_case)
 
+    renumber_counterfactual_steps(counterfactual, intervention)
     counterfactual.metadata["counterfactual_intervention"] = intervention
     return counterfactual, intervention
 
@@ -318,7 +319,7 @@ def synthetic_step(
         command=command,
         observation=observation,
         file_path=target,
-        metadata={"counterfactual": True},
+        metadata={"counterfactual": True, "synthetic_step_id": step_id},
     )
     return NormalizedStep(
         step_id=step_id,
@@ -336,8 +337,30 @@ def synthetic_step(
         modifies_file=modifies_file,
         is_patch=is_patch,
         is_final=False,
-        metadata={"paths": paths or [], "counterfactual": True},
+        metadata={"paths": paths or [], "counterfactual": True, "synthetic_step_id": step_id},
     )
+
+
+def renumber_counterfactual_steps(trace: NormalizedTrace, intervention: dict[str, Any]) -> None:
+    old_to_new: dict[str, int] = {}
+    for new_id, step in enumerate(trace.steps):
+        old_step_id = step.step_id
+        old_raw_step_id = step.raw_step.step_id
+        old_key = str(old_step_id)
+        old_to_new[old_key] = new_id
+        step.metadata["counterfactual_step_id"] = new_id
+        step.metadata["source_step_id"] = old_step_id
+        step.raw_step.metadata["counterfactual_step_id"] = new_id
+        step.raw_step.metadata["source_step_id"] = old_raw_step_id
+        step.step_id = new_id
+        step.raw_step.step_id = new_id
+    intervention["step_id_map"] = old_to_new
+    intervention["inserted_step_ids"] = remap_step_ids(intervention.get("inserted_step_ids"), old_to_new)
+    intervention["modified_step_ids"] = remap_step_ids(intervention.get("modified_step_ids"), old_to_new)
+
+
+def remap_step_ids(values: Any, mapping: dict[str, int]) -> list[int]:
+    return [mapping[str(value)] for value in values or [] if str(value) in mapping]
 
 
 def index_for_onset_or_first(trace: NormalizedTrace, failure: FailureHypothesis, action_type: ActionType) -> int:
