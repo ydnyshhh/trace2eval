@@ -4,7 +4,7 @@ from trace2eval.adapters import GenericJSONAdapter
 from trace2eval.counterfactual import run_counterfactual_replay
 from trace2eval.mining import mine_trace
 from trace2eval.normalize import normalize_trace
-from trace2eval.schemas import ActionType, NormalizedTrace
+from trace2eval.schemas import ActionType, NormalizedTrace, RawStep, RawTrace
 
 
 def load_example_trace(path: str) -> NormalizedTrace:
@@ -33,6 +33,39 @@ def test_counterfactual_premature_edit_flips_eval() -> None:
         step.action_type == ActionType.READ and step.touches_test_file
         for step in replay.counterfactual_trace.steps[:first_edit_index]
     )
+
+
+def test_counterfactual_premature_intervention_inserts_trace_and_eval_reads() -> None:
+    trace = normalize_trace(
+        RawTrace(
+            trace_id="agent-router",
+            source="generic_json",
+            task={
+                "description": "First inspect traces/failed_run.jsonl, then evals/test_tool_routing.py, then patch src/tool_router.py.",
+                "prompt": "First inspect traces/failed_run.jsonl, then evals/test_tool_routing.py, then patch src/tool_router.py.",
+            },
+            steps=[
+                RawStep(
+                    step_id=0,
+                    command='rg "tool policy" evals traces src',
+                    observation="evals/test_tool_routing.py:def test_router_enforces_tool_policy\n"
+                    "traces/failed_run.jsonl:{...}\n"
+                    "src/tool_router.py:def route_tool_call",
+                ),
+                RawStep(step_id=1, file_path="src/tool_router.py", diff="--- a/src/tool_router.py\n+++ b/src/tool_router.py"),
+                RawStep(step_id=2, command="pytest evals/test_tool_routing.py", exit_code=1, observation="FAILED evals/test_tool_routing.py"),
+            ],
+        )
+    )
+
+    replay = run_counterfactual_replay(trace, mine_trace(trace), failure_selector="premature_intervention")
+
+    assert replay.failure.failure_type == "premature_intervention"
+    assert replay.intervention["type"] == "insert_failure_evidence_before_policy_edit"
+    assert not replay.original_result.passed
+    assert replay.counterfactual_result.passed
+    inserted = [replay.counterfactual_trace.steps[step_id] for step_id in replay.intervention["inserted_step_ids"]]
+    assert [step.target for step in inserted] == ["evals/test_tool_routing.py", "traces/failed_run.jsonl"]
 
 
 def test_counterfactual_no_verification_flips_eval() -> None:

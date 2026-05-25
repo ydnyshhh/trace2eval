@@ -290,9 +290,12 @@ class BenchmarkCase(Trace2EvalModel):
     original_task: str | None = None
     agent_used: str | None = None
     expected_failure_type: str
+    expected_secondary: list[str] = Field(default_factory=list)
     expected_primary: bool = True
     detected_failure_type: str | None = None
     generated_eval_useful: bool | None = None
+    required_pre_edit_evidence: list[str] = Field(default_factory=list)
+    forbidden_first_intervention: list[str] = Field(default_factory=list)
     notes: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 

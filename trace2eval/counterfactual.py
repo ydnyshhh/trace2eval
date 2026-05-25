@@ -89,7 +89,9 @@ def build_counterfactual_trace(
         "source_onset_step_id": failure.onset_step_id,
     }
 
-    if failure.failure_type in {"premature_edit", "wrong_file_localization"}:
+    if failure.failure_type == "premature_intervention":
+        intervention = intervene_with_failure_evidence_before_policy_edit(counterfactual, failure, eval_case)
+    elif failure.failure_type in {"premature_edit", "wrong_file_localization"}:
         intervention = intervene_with_pre_edit_test_read(counterfactual, failure, eval_case)
     elif failure.failure_type == "no_verification":
         intervention = intervene_with_post_edit_verify(counterfactual, failure, eval_case)
@@ -134,6 +136,39 @@ def intervene_with_pre_edit_test_read(
         "type": "insert_read_before_edit",
         "summary": f"Inserted READ of {test_path} before the suspected first bad edit.",
         "inserted_step_ids": [step.step_id],
+        "modified_step_ids": [],
+    }
+
+
+def intervene_with_failure_evidence_before_policy_edit(
+    trace: NormalizedTrace,
+    failure: FailureHypothesis,
+    eval_case: EvalCase,
+) -> dict[str, Any]:
+    onset_index = index_for_onset_or_first(trace, failure, ActionType.EDIT)
+    evidence_paths = expected_failure_evidence_paths(failure, eval_case)
+    inserted_steps: list[NormalizedStep] = []
+    for path in evidence_paths:
+        inserted_steps.append(
+            synthetic_step(
+                f"cf-read-evidence-{len(inserted_steps)}",
+                ActionType.READ,
+                Phase.LOCALIZATION,
+                command=f"cat {path}",
+                target=path,
+                observation=f"Counterfactual read of required failure evidence {path}.",
+                paths=[path],
+                touches_test_file=is_test_path(path),
+                touches_source_file=is_source_path(path),
+            )
+        )
+    if not inserted_steps:
+        return no_op_intervention("No required failure-evidence path was available for insertion.")
+    trace.steps[onset_index:onset_index] = inserted_steps
+    return {
+        "type": "insert_failure_evidence_before_policy_edit",
+        "summary": f"Inserted READ of required failure evidence before the policy edit: {evidence_paths}.",
+        "inserted_step_ids": [step.step_id for step in inserted_steps],
         "modified_step_ids": [],
     }
 
@@ -408,6 +443,22 @@ def expected_test_path(failure: FailureHypothesis, eval_case: EvalCase) -> str:
     return "tests/test_counterfactual.py"
 
 
+def expected_failure_evidence_paths(failure: FailureHypothesis, eval_case: EvalCase) -> list[str]:
+    constraints = task_constraints(eval_case)
+    values = constraints.get("required_pre_edit_evidence") or failure.metadata.get("required_pre_edit_evidence") or []
+    if isinstance(values, dict):
+        values = [*(values.get("all_of") or []), *(values.get("any_of") or [])]
+    paths: list[str] = []
+    for value in values:
+        path = str(value)
+        if path and path not in paths:
+            paths.append(path)
+    if paths:
+        return paths
+    test_path = expected_test_path(failure, eval_case)
+    return [test_path]
+
+
 def expected_source_path(failure: FailureHypothesis, eval_case: EvalCase) -> str:
     constraints = task_constraints(eval_case)
     for path in constraints.get("expected_relevant_source_files") or []:
@@ -457,6 +508,11 @@ def annotate_intervention_support(intervention: dict[str, Any], failure_type: st
             True,
             0.90,
             "Direct trajectory intervention: add the missing test read before the first edit.",
+        ),
+        "premature_intervention": (
+            True,
+            0.92,
+            "Direct trajectory intervention: add the missing failure-evidence reads before the policy edit.",
         ),
         "no_verification": (
             True,

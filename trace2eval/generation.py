@@ -72,6 +72,7 @@ def generate_eval_cases(
 
 def rule_for_failure(failure_type: str) -> str:
     return {
+        "premature_intervention": "first_policy_edit_after_failure_evidence",
         "premature_edit": "first_edit_after_test_read_or_verify",
         "wrong_file_localization": "read_mentioned_paths_before_edit",
         "no_verification": "verify_after_last_edit_before_stop",
@@ -79,6 +80,7 @@ def rule_for_failure(failure_type: str) -> str:
         "ignored_tool_error": "recover_after_tool_error",
         "test_editing_reward_hack": "no_test_edit_unless_requested",
         "overbroad_patch": "edit_file_count_below_threshold",
+        "ineffective_patch_or_noop_edit": "no_noop_patch",
         "submit_after_failure": "no_submit_after_failed_verify",
     }.get(failure_type, "first_edit_after_test_read_or_verify")
 
@@ -100,7 +102,15 @@ def derive_task_constraints(causal_slice: CausalSlice) -> dict[str, Any]:
     hypothesis = causal_slice.metadata.get("hypothesis") or {}
     hypothesis_metadata = hypothesis.get("metadata") or {}
     candidate_paths: list[str] = []
-    for key in ("edited_target", "ignored_test_paths", "unread_relevant_paths", "edited_files", "search_paths"):
+    for key in (
+        "edited_target",
+        "ignored_test_paths",
+        "unread_relevant_paths",
+        "edited_files",
+        "search_paths",
+        "required_pre_edit_evidence",
+        "intervention_targets",
+    ):
         add_paths(candidate_paths, hypothesis_metadata.get(key))
     for evidence in hypothesis.get("evidence") or []:
         add_paths(candidate_paths, extract_paths_from_text(str(evidence)))
@@ -119,6 +129,8 @@ def derive_task_constraints(causal_slice: CausalSlice) -> dict[str, Any]:
     forbidden = hypothesis_metadata.get("edited_target")
     if forbidden and isinstance(forbidden, str) and forbidden not in source_files and is_source_path(forbidden):
         source_files.append(forbidden)
+    required_pre_edit_evidence = sorted(set(str(path) for path in hypothesis_metadata.get("required_pre_edit_evidence") or []))
+    intervention_targets = sorted(set(str(path) for path in hypothesis_metadata.get("intervention_targets") or []))
 
     return {
         "expected_relevant_test_files": test_files,
@@ -126,6 +138,8 @@ def derive_task_constraints(causal_slice: CausalSlice) -> dict[str, Any]:
         "expected_mentioned_paths": sorted(set(mentioned_paths)),
         "forbidden_premature_target": forbidden if isinstance(forbidden, str) else None,
         "required_observation_paths": sorted(set(test_files + source_files)),
+        "required_pre_edit_evidence": required_pre_edit_evidence,
+        "intervention_targets": intervention_targets,
     }
 
 

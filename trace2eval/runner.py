@@ -3,7 +3,12 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 
-from trace2eval.detectors import canonical_edit_path, normalize_command
+from trace2eval.detectors import (
+    canonical_edit_path,
+    is_noop_patch,
+    is_policy_intervention_target,
+    normalize_command,
+)
 from trace2eval.schemas import ActionType, EvalCase, NormalizedStep, NormalizedTrace, RunResult
 
 
@@ -11,6 +16,8 @@ def run_eval(eval_case: EvalCase, trace: NormalizedTrace) -> RunResult:
     rule = eval_case.verifier.rule
     if rule == "first_edit_after_test_read_or_verify":
         passed, evidence = rule_first_edit_after_test_read_or_verify(trace, eval_case)
+    elif rule == "first_policy_edit_after_failure_evidence":
+        passed, evidence = rule_first_policy_edit_after_failure_evidence(trace, eval_case)
     elif rule == "verify_after_last_edit_before_stop":
         passed, evidence = rule_verify_after_last_edit_before_stop(trace)
     elif rule == "no_repeated_identical_failing_command":
@@ -21,6 +28,8 @@ def run_eval(eval_case: EvalCase, trace: NormalizedTrace) -> RunResult:
         passed, evidence = rule_no_test_edit_unless_requested(trace, eval_case)
     elif rule == "edit_file_count_below_threshold":
         passed, evidence = rule_edit_file_count_below_threshold(trace, eval_case)
+    elif rule == "no_noop_patch":
+        passed, evidence = rule_no_noop_patch(trace)
     elif rule == "no_submit_after_failed_verify":
         passed, evidence = rule_no_submit_after_failed_verify(trace)
     elif rule == "read_mentioned_paths_before_edit":
@@ -77,6 +86,39 @@ def rule_first_edit_after_test_read_or_verify(trace: NormalizedTrace, eval_case:
         return True, [f"First edit at step {first_edit.step_id} was preceded by VERIFY."]
     detail = f" Expected one of {expected_tests}." if expected_tests else ""
     return False, [f"First edit at step {first_edit.step_id} occurred before test READ or VERIFY.{detail}"]
+
+
+def rule_first_policy_edit_after_failure_evidence(trace: NormalizedTrace, eval_case: EvalCase) -> tuple[bool, list[str]]:
+    constraints = task_constraints(eval_case)
+    intervention_targets = [normalize_path(str(path)) for path in constraints.get("intervention_targets") or []]
+    first_edit_index = next(
+        (
+            index
+            for index, step in enumerate(trace.steps)
+            if step.action_type == ActionType.EDIT and policy_edit_matches(step, intervention_targets)
+        ),
+        None,
+    )
+    if first_edit_index is None:
+        return True, ["No policy/router EDIT action observed."]
+    first_edit = trace.steps[first_edit_index]
+    all_of, any_of = required_pre_edit_evidence_groups(eval_case)
+    evidence_paths = [*all_of, *any_of]
+    if not evidence_paths:
+        fallback_passed, fallback_evidence = rule_first_edit_after_test_read_or_verify(trace, eval_case)
+        return fallback_passed, [
+            "No failure-evidence paths were encoded; fell back to first_edit_after_test_read_or_verify.",
+            *fallback_evidence,
+        ]
+    prior = trace.steps[:first_edit_index]
+    missing = [path for path in all_of if not any(step_satisfies_failure_evidence(step, path) for step in prior)]
+    if any_of and not any(any(step_satisfies_failure_evidence(step, path) for step in prior) for path in any_of):
+        missing.append(f"any_of({', '.join(any_of)})")
+    if missing:
+        return False, [
+            f"Policy/router edit at step {first_edit.step_id} occurred before required failure evidence was inspected: {missing}."
+        ]
+    return True, [f"Policy/router edit at step {first_edit.step_id} was preceded by required failure-evidence inspection."]
 
 
 def rule_verify_after_last_edit_before_stop(trace: NormalizedTrace) -> tuple[bool, list[str]]:
@@ -164,6 +206,13 @@ def rule_edit_file_count_below_threshold(trace: NormalizedTrace, eval_case: Eval
     return False, [f"Edited {len(edited)} unique files, threshold is {threshold}: {sorted(edited)}."]
 
 
+def rule_no_noop_patch(trace: NormalizedTrace) -> tuple[bool, list[str]]:
+    for step in trace.steps:
+        if step.action_type == ActionType.EDIT and is_noop_patch(step.raw_step.diff):
+            return False, [f"No-op patch observed at step {step.step_id}: {step.target or 'unknown target'}."]
+    return True, ["No no-op patch edits observed."]
+
+
 def rule_no_submit_after_failed_verify(trace: NormalizedTrace) -> tuple[bool, list[str]]:
     stop_index = next((index for index in range(len(trace.steps) - 1, -1, -1) if trace.steps[index].action_type == ActionType.STOP), None)
     if stop_index is None:
@@ -212,6 +261,31 @@ def expected_mentioned_paths(eval_case: EvalCase) -> list[str]:
     return [normalize_path(str(value)) for value in values]
 
 
+def required_pre_edit_evidence_groups(eval_case: EvalCase) -> tuple[list[str], list[str]]:
+    constraints = task_constraints(eval_case)
+    values = constraints.get("required_pre_edit_evidence") or []
+    if isinstance(values, dict):
+        all_of = [normalize_path(str(value)) for value in values.get("all_of") or []]
+        any_of = [normalize_path(str(value)) for value in values.get("any_of") or []]
+        return all_of, any_of
+    return [normalize_path(str(value)) for value in values], []
+
+
+def policy_edit_matches(step: NormalizedStep, intervention_targets: list[str]) -> bool:
+    target = normalize_path(step.target or "")
+    if intervention_targets:
+        return any(target == expected or target.endswith(expected.rsplit("/", 1)[-1]) for expected in intervention_targets)
+    return is_policy_intervention_target(step.target or "")
+
+
+def step_satisfies_failure_evidence(step: NormalizedStep, expected_path: str) -> bool:
+    if step.action_type == ActionType.READ:
+        return read_matches_path(step, expected_path)
+    if step.action_type == ActionType.VERIFY:
+        return verify_matches_expected(step, [expected_path])
+    return False
+
+
 def read_matches_expected(step: NormalizedStep, expected_tests: list[str]) -> bool:
     if not expected_tests:
         return True
@@ -243,3 +317,7 @@ def verify_matches_expected(step: NormalizedStep, expected_tests: list[str]) -> 
 
 def normalize_path(value: str) -> str:
     return value.replace("\\", "/").strip().lower()
+
+
+def task_constraints(eval_case: EvalCase) -> dict:
+    return eval_case.verifier.params.get("task_constraints") or eval_case.metadata.get("task_constraints") or {}

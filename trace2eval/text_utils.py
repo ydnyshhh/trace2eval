@@ -11,7 +11,7 @@ def extract_paths_from_text(text: str | None) -> list[str]:
         r"^[+-]{3}\s+[ab]/([^\s]+)",
         r"^\*\*\* (?:Update|Add|Delete) File:\s+([^\s]+)",
     ]
-    path_pattern = r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_./\\-]+\.(?:py|ts|tsx|js|jsx|go|rs|java|cpp|c|h|hpp|rb|php|md|toml|yaml|yml|json))(?![A-Za-z0-9_.-])"
+    path_pattern = r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_./\\-]+\.(?:py|ts|tsx|js|jsx|go|rs|java|cpp|c|h|hpp|rb|php|md|toml|yaml|yml|json|jsonl|log|txt))(?![A-Za-z0-9_.-])"
     for line in text.splitlines():
         for pattern in diff_patterns:
             for match in re.finditer(pattern, line, flags=re.IGNORECASE):

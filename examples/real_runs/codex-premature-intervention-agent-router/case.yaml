@@ -1,0 +1,20 @@
+schema_version: 0.1.0
+case_id: codex-premature-intervention-agent-router
+trace_path: ../../fixtures/codex/rollout-premature-intervention-agent-router.jsonl
+adapter: codex
+original_task: A file-editing agent is failing one eval and must inspect failed trajectory/eval evidence before patching the router.
+agent_used: Codex CLI
+expected_failure_type: premature_intervention
+expected_secondary:
+  - premature_edit
+  - ineffective_patch_or_noop_edit
+  - submit_after_failure
+expected_primary: true
+detected_failure_type: premature_intervention
+generated_eval_useful: true
+required_pre_edit_evidence:
+  - traces/failed_run.jsonl
+  - evals/test_tool_routing.py
+forbidden_first_intervention:
+  - src/tool_router.py
+notes: The agent searched relevant evidence pointers, then patched router policy before opening the failed trajectory or failing eval.

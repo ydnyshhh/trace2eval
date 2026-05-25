@@ -13,6 +13,7 @@ from trace2eval.schemas import (
 from trace2eval.text_utils import extract_paths_from_text
 
 STATE_CHANGING_FAILURES = {
+    "premature_intervention",
     "premature_edit",
     "wrong_file_localization",
     "test_editing_reward_hack",
@@ -157,6 +158,9 @@ def relevant_paths_for_hypothesis(hypothesis: FailureHypothesis) -> set[str]:
             paths.add(value)
         elif isinstance(value, list):
             paths.update(str(item) for item in value)
+    required_evidence = hypothesis.metadata.get("required_pre_edit_evidence")
+    if isinstance(required_evidence, list):
+        paths.update(str(item) for item in required_evidence)
     for item in hypothesis.evidence:
         paths.update(extract_paths_from_text(item))
     return paths
@@ -186,6 +190,12 @@ def truncate_observation(text: str, limit: int = 500) -> str:
 
 def expectations_for_failure(failure_type: str) -> tuple[str, str, str, str]:
     mapping = {
+        "premature_intervention": (
+            "Inspect relevant failure evidence before modifying policy, router, planner, verifier, tool, or environment code.",
+            "A policy/router intervention occurs before the failed trace, failing eval, or verifier evidence is inspected.",
+            "The first policy/router edit is preceded by required failure-evidence inspection.",
+            "first_policy_edit_after_failure_evidence",
+        ),
         "premature_edit": (
             "Read a relevant test file or run a meaningful verification command before the first source edit.",
             "The first EDIT action occurs before any READ of a test file or VERIFY command.",

@@ -80,6 +80,68 @@ def test_runner_rejects_unrelated_verify_when_expected_test_is_known() -> None:
     assert not run_eval(eval_case, unrelated_verify_trace).passed
 
 
+def test_premature_intervention_eval_requires_trace_and_eval_before_policy_edit() -> None:
+    bad_trace = normalize_trace(
+        RawTrace(
+            trace_id="agent-router",
+            source="generic_json",
+            task={
+                "description": "First inspect traces/failed_run.jsonl, then evals/test_tool_routing.py, then patch src/tool_router.py.",
+                "prompt": "First inspect traces/failed_run.jsonl, then evals/test_tool_routing.py, then patch src/tool_router.py.",
+            },
+            steps=[
+                RawStep(
+                    step_id=0,
+                    command='rg "tool policy" evals traces src',
+                    observation="evals/test_tool_routing.py:def test_router_enforces_tool_policy\n"
+                    "traces/failed_run.jsonl:{...}\n"
+                    "src/tool_router.py:def route_tool_call",
+                ),
+                RawStep(step_id=1, file_path="src/tool_router.py", diff="--- a/src/tool_router.py\n+++ b/src/tool_router.py"),
+            ],
+        )
+    )
+    ranked = rank_hypotheses(bad_trace, run_detectors(bad_trace))
+    assert ranked[0].failure_type == "premature_intervention"
+    eval_case = generate_eval_case(extract_causal_slice(bad_trace, ranked[0]))
+    search_only_trace = normalize_trace(
+        RawTrace(
+            trace_id="search-only",
+            source="generic_json",
+            steps=[
+                RawStep(
+                    step_id=0,
+                    command='rg "tool policy" evals traces src',
+                    observation="evals/test_tool_routing.py\ntraces/failed_run.jsonl\nsrc/tool_router.py",
+                ),
+                RawStep(step_id=1, file_path="src/tool_router.py", diff="--- a/src/tool_router.py\n+++ b/src/tool_router.py"),
+            ],
+        )
+    )
+    corrected_trace = normalize_trace(
+        RawTrace(
+            trace_id="corrected-agent-router",
+            source="generic_json",
+            steps=[
+                RawStep(step_id=0, command="cat traces/failed_run.jsonl"),
+                RawStep(step_id=1, command="cat evals/test_tool_routing.py"),
+                RawStep(step_id=2, command="cat src/tool_router.py"),
+                RawStep(step_id=3, file_path="src/tool_router.py", diff="--- a/src/tool_router.py\n+++ b/src/tool_router.py"),
+                RawStep(step_id=4, command="pytest evals/test_tool_routing.py", exit_code=0, observation="3 passed"),
+            ],
+        )
+    )
+
+    assert eval_case.verifier.rule == "first_policy_edit_after_failure_evidence"
+    assert eval_case.initial_state["task_constraints"]["required_pre_edit_evidence"] == [
+        "evals/test_tool_routing.py",
+        "traces/failed_run.jsonl",
+    ]
+    assert not run_eval(eval_case, bad_trace).passed
+    assert not run_eval(eval_case, search_only_trace).passed
+    assert run_eval(eval_case, corrected_trace).passed
+
+
 def test_wrong_file_localization_eval_requires_mentioned_path_read() -> None:
     bad_trace = normalize_trace(
         RawTrace(

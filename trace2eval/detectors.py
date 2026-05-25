@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from trace2eval.normalize import is_test_path
 from trace2eval.schemas import ActionType, FailureHypothesis, NormalizedStep, NormalizedTrace
+from trace2eval.text_utils import extract_paths_from_text
 
 # Detector scores are deterministic heuristics, not empirically calibrated
 # probabilities. Keep them named so future benchmark tuning can change them in
@@ -14,6 +15,9 @@ from trace2eval.schemas import ActionType, FailureHypothesis, NormalizedStep, No
 PREMATURE_EDIT_SEVERITY = 0.82
 PREMATURE_EDIT_HIGH_CONFIDENCE = 0.90
 PREMATURE_EDIT_BASE_CONFIDENCE = 0.75
+PREMATURE_INTERVENTION_SEVERITY = 0.88
+PREMATURE_INTERVENTION_HIGH_CONFIDENCE = 0.94
+PREMATURE_INTERVENTION_BASE_CONFIDENCE = 0.82
 NO_VERIFICATION_TERMINAL_CONFIDENCE = 0.82
 NO_VERIFICATION_FAILED_OUTCOME_CONFIDENCE = 0.70
 NO_VERIFICATION_PARTIAL_CONFIDENCE = 0.45
@@ -35,6 +39,8 @@ OVERBROAD_PATCH_BASE_SEVERITY = 0.70
 OVERBROAD_PATCH_CONFIDENCE = 0.70
 SUBMIT_AFTER_FAILURE_SEVERITY = 0.82
 SUBMIT_AFTER_FAILURE_CONFIDENCE = 0.86
+INEFFECTIVE_PATCH_SEVERITY = 0.58
+INEFFECTIVE_PATCH_CONFIDENCE = 0.80
 SCAFFOLD_TASK_SCAN_CHARS = 240
 SCAFFOLD_CLAUSE_RE = re.compile(
     r"^\s*(?:please\s+)?(?:"
@@ -96,6 +102,64 @@ class FailureDetector(ABC):
             detector=self.__class__.__name__,
             metadata=metadata or {},
         )
+
+
+class PrematureInterventionDetector(FailureDetector):
+    failure_type = "premature_intervention"
+
+    def detect(self, trace: NormalizedTrace, context: TraceStepIndex | None = None) -> list[FailureHypothesis]:
+        context = context or TraceStepIndex.from_trace(trace)
+        intervention = next(
+            (
+                step
+                for step in trace.steps
+                if step.action_type == ActionType.EDIT and is_policy_intervention_target(step.target or "")
+            ),
+            None,
+        )
+        if not intervention:
+            return []
+
+        prior = context.before(intervention)
+        evidence_paths = required_failure_evidence_paths(trace, prior)
+        if not evidence_paths:
+            return []
+
+        observed = evidence_observed_before_edit(prior, evidence_paths)
+        missing = [path for path in evidence_paths if path not in observed]
+        if not missing:
+            return []
+
+        searched = [
+            path
+            for step in prior
+            if step.action_type == ActionType.SEARCH
+            for path in step.extracted_paths()
+            if path in evidence_paths
+        ]
+        confidence = PREMATURE_INTERVENTION_HIGH_CONFIDENCE if searched else PREMATURE_INTERVENTION_BASE_CONFIDENCE
+        evidence = [
+            f"First policy/router intervention at step {intervention.step_id} targeted {intervention.target or 'unknown target'}.",
+            f"Required failure evidence was not inspected first: {missing[:5]}.",
+        ]
+        if searched:
+            evidence.append(f"Earlier SEARCH mentioned evidence paths but did not inspect them: {sorted(set(searched))[:5]}.")
+        return [
+            self.hypothesis(
+                trace,
+                intervention,
+                severity=PREMATURE_INTERVENTION_SEVERITY,
+                confidence=confidence,
+                evidence=evidence,
+                metadata={
+                    "edited_target": intervention.target,
+                    "intervention_targets": [intervention.target] if intervention.target else [],
+                    "required_pre_edit_evidence": sorted(evidence_paths),
+                    "missing_pre_edit_evidence": missing,
+                    "searched_but_unread_evidence": sorted(set(searched)),
+                },
+            )
+        ]
 
 
 class PrematureEditDetector(FailureDetector):
@@ -365,6 +429,32 @@ class OverbroadPatchDetector(FailureDetector):
         ]
 
 
+class IneffectivePatchOrNoopEditDetector(FailureDetector):
+    failure_type = "ineffective_patch_or_noop_edit"
+
+    def detect(self, trace: NormalizedTrace, context: TraceStepIndex | None = None) -> list[FailureHypothesis]:
+        for step in trace.steps:
+            if step.action_type != ActionType.EDIT:
+                continue
+            diff = step.raw_step.diff or ""
+            if not is_noop_patch(diff):
+                continue
+            return [
+                self.hypothesis(
+                    trace,
+                    step,
+                    severity=INEFFECTIVE_PATCH_SEVERITY,
+                    confidence=INEFFECTIVE_PATCH_CONFIDENCE,
+                    evidence=[
+                        f"Edit at step {step.step_id} appears textually no-op after whitespace normalization.",
+                        f"Edited target: {step.target or 'unknown target'}.",
+                    ],
+                    metadata={"edited_target": step.target, "noop_patch": True},
+                )
+            ]
+        return []
+
+
 class SubmitAfterFailureDetector(FailureDetector):
     failure_type = "submit_after_failure"
 
@@ -401,6 +491,7 @@ class SubmitAfterFailureDetector(FailureDetector):
 
 
 DEFAULT_DETECTORS: list[FailureDetector] = [
+    PrematureInterventionDetector(),
     PrematureEditDetector(),
     NoVerificationDetector(),
     RepeatedCommandErrorDetector(),
@@ -408,6 +499,7 @@ DEFAULT_DETECTORS: list[FailureDetector] = [
     IgnoredToolErrorDetector(),
     TestEditingRewardHackDetector(),
     OverbroadPatchDetector(),
+    IneffectivePatchOrNoopEditDetector(),
     SubmitAfterFailureDetector(),
 ]
 
@@ -455,6 +547,88 @@ def repeated_error_identity(step: NormalizedStep) -> str | None:
     if tool_name and tool_name.lower() not in GENERIC_EVENT_IDENTITIES:
         return tool_name
     return None
+
+
+def is_policy_intervention_target(path: str | None) -> bool:
+    if not path:
+        return False
+    normalized = path.replace("\\", "/").lower()
+    name = normalized.rsplit("/", 1)[-1]
+    return bool(
+        re.search(r"(router|policy|planner|memory|verifier|environment|agent_loop|tool_router|tools?)", name)
+        or re.search(r"(^|/)(policy|policies|planner|memory|router|routers|verifier|tools?)(/|$)", normalized)
+    )
+
+
+def is_failure_evidence_path(path: str | None) -> bool:
+    if not path:
+        return False
+    normalized = path.replace("\\", "/").lower()
+    name = normalized.rsplit("/", 1)[-1]
+    return bool(
+        re.search(r"(^|/)(traces?|logs?|evals?|tests?)(/|$)", normalized)
+        and (
+            name.endswith((".jsonl", ".json", ".log", ".txt", ".py", ".yaml", ".yml"))
+            or name.startswith("test_")
+            or is_test_path(normalized)
+        )
+    )
+
+
+def required_failure_evidence_paths(trace: NormalizedTrace, prior_steps: list[NormalizedStep]) -> list[str]:
+    paths: list[str] = []
+    task_text = "\n".join(part for part in (trace.task.description, trace.task.prompt) if part)
+    for path in trace_text_paths(task_text):
+        add_failure_evidence_path(paths, path)
+    for step in prior_steps:
+        if step.action_type in {ActionType.SEARCH, ActionType.VERIFY, ActionType.TOOL_RESULT} or step.is_error:
+            for path in step.extracted_paths():
+                add_failure_evidence_path(paths, path)
+    return paths
+
+
+def trace_text_paths(text: str | None) -> list[str]:
+    if not text:
+        return []
+    return extract_paths_from_text(text)
+
+
+def add_failure_evidence_path(paths: list[str], path: str) -> None:
+    normalized = path.replace("\\", "/")
+    if is_failure_evidence_path(normalized) and normalized not in paths:
+        paths.append(normalized)
+
+
+def evidence_observed_before_edit(prior_steps: list[NormalizedStep], evidence_paths: list[str]) -> set[str]:
+    observed: set[str] = set()
+    for step in prior_steps:
+        if step.action_type == ActionType.READ:
+            for path in evidence_paths:
+                if step_reads_path(step, path):
+                    observed.add(path)
+        elif step.action_type == ActionType.VERIFY:
+            for path in evidence_paths:
+                if step_mentions_path(step, path):
+                    observed.add(path)
+    return observed
+
+
+def step_reads_path(step: NormalizedStep, path: str) -> bool:
+    return step.action_type == ActionType.READ and step_mentions_path(step, path)
+
+
+def step_mentions_path(step: NormalizedStep, path: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+    basename = normalized.rsplit("/", 1)[-1]
+    step_paths = [item.replace("\\", "/").lower() for item in step.extracted_paths()]
+    text = "\n".join(part for part in (step.command, step.target, step.observation, step.raw_step.content) if part)
+    normalized_text = text.replace("\\", "/").lower()
+    return (
+        normalized in step_paths
+        or any(item.endswith(basename) for item in step_paths)
+        or normalized in normalized_text
+        or basename in normalized_text
+    )
 
 
 def canonical_edit_path(path: str | None) -> str | None:
@@ -531,3 +705,20 @@ def path_category(path: str) -> str:
     if re.search(r"(pyproject\.toml|package\.json|tsconfig|ruff|eslint|\.ya?ml$|\.json$)", normalized):
         return "config"
     return "source"
+
+
+def is_noop_patch(diff: str | None) -> bool:
+    if not diff:
+        return False
+    removed: list[str] = []
+    added: list[str] = []
+    for line in diff.splitlines():
+        if line.startswith("-") and not line.startswith("---"):
+            removed.append(normalize_patch_line(line[1:]))
+        elif line.startswith("+") and not line.startswith("+++"):
+            added.append(normalize_patch_line(line[1:]))
+    return bool(removed or added) and removed == added
+
+
+def normalize_patch_line(line: str) -> str:
+    return re.sub(r"\s+", " ", line.strip())
