@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from trace2eval.adapters.common import extract_paths_from_text
 from trace2eval.io import slugify
 from trace2eval.mining import extract_causal_slice, rank_hypotheses
 from trace2eval.normalize import is_source_path, is_test_path
@@ -13,6 +12,7 @@ from trace2eval.schemas import (
     FailureHypothesis,
     NormalizedTrace,
 )
+from trace2eval.text_utils import extract_paths_from_text
 
 
 def generate_eval_case(causal_slice: CausalSlice) -> EvalCase:

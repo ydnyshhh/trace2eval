@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from trace2eval.text_utils import extract_paths_from_text
+
 SCHEMA_VERSION = "0.1.0"
 
 
@@ -142,8 +144,6 @@ class NormalizedStep(Trace2EvalModel):
         return canonical_step_id(value)
 
     def extracted_paths(self) -> list[str]:
-        from trace2eval.adapters.common import extract_paths_from_text
-
         paths: list[str] = []
         for path in self.metadata.get("paths") or []:
             normalized = canonical_extracted_path(path)

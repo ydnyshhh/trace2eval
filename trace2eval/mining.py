@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from trace2eval.adapters.common import extract_paths_from_text
 from trace2eval.detectors import run_detectors
 from trace2eval.schemas import (
     ActionType,
@@ -11,6 +10,7 @@ from trace2eval.schemas import (
     NormalizedStep,
     NormalizedTrace,
 )
+from trace2eval.text_utils import extract_paths_from_text
 
 STATE_CHANGING_FAILURES = {
     "premature_edit",
@@ -100,7 +100,7 @@ def extract_causal_slice(trace: NormalizedTrace, hypothesis: FailureHypothesis) 
     included_ids = {step.step_id for step in included}
     relevant_paths = relevant_paths_for_hypothesis(hypothesis)
     for step in trace.steps[: onset_index + 1]:
-        paths = paths_for(step)
+        paths = step.extracted_paths()
         if any(path in relevant_paths for path in paths) and step.step_id not in included_ids:
             included.append(step)
             included_ids.add(step.step_id)
@@ -147,12 +147,6 @@ def find_step(
     if index is not None:
         return trace.steps[index]
     return trace.steps[0] if trace.steps else None
-
-
-def paths_for(step: NormalizedStep | None) -> list[str]:
-    if not step:
-        return []
-    return step.extracted_paths()
 
 
 def relevant_paths_for_hypothesis(hypothesis: FailureHypothesis) -> set[str]:

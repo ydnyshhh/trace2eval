@@ -3,7 +3,7 @@ from trace2eval.generation import generate_eval_case
 from trace2eval.mining import causal_hypothesis_report, extract_causal_slice, rank_hypotheses
 from trace2eval.normalize import normalize_trace
 from trace2eval.runner import run_eval, run_evals
-from trace2eval.schemas import RawStep, RawTrace
+from trace2eval.schemas import EvalCase, EvalVerifier, RawStep, RawTrace
 
 
 def test_rank_slice_generate_and_run_premature_edit() -> None:
@@ -109,6 +109,30 @@ def test_wrong_file_localization_eval_requires_mentioned_path_read() -> None:
     assert eval_case.verifier.rule == "read_mentioned_paths_before_edit"
     assert not run_eval(eval_case, bad_trace).passed
     assert run_eval(eval_case, corrected_trace).passed
+
+
+def test_wrong_file_localization_rule_falls_back_when_no_mentioned_paths() -> None:
+    trace = normalize_trace(
+        RawTrace(
+            trace_id="fallback",
+            source="generic_json",
+            steps=[
+                RawStep(step_id=0, file_path="src/parser.py", diff="--- a/src/parser.py\n+++ b/src/parser.py"),
+            ],
+        )
+    )
+    eval_case = EvalCase(
+        eval_id="fallback",
+        source_trace_id="fallback",
+        failure_type="wrong_file_localization",
+        verifier=EvalVerifier(rule="read_mentioned_paths_before_edit"),
+    )
+
+    result = run_eval(eval_case, trace)
+
+    assert not result.passed
+    assert "fell back" in result.evidence[0]
+    assert "First edit" in result.evidence[1]
 
 
 def test_causal_hypothesis_report_marks_primary_and_downstream() -> None:

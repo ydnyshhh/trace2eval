@@ -36,6 +36,17 @@ OVERBROAD_PATCH_CONFIDENCE = 0.70
 SUBMIT_AFTER_FAILURE_SEVERITY = 0.82
 SUBMIT_AFTER_FAILURE_CONFIDENCE = 0.86
 SCAFFOLD_TASK_SCAN_CHARS = 240
+SCAFFOLD_CLAUSE_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:"
+    r"create\s+(?:a\s+)?(?:tiny\s+|small\s+|minimal\s+|toy\s+|sample\s+|scratch\s+)?(?:toy\s+)?(?:python\s+)?(?:package|project|repo|repository)\b|"
+    r"build\s+(?:a\s+)?(?:tiny\s+|small\s+|minimal\s+|toy\s+|sample\s+|scratch\s+)?(?:toy\s+)?(?:package|project|repo|repository)\b|"
+    r"scaffold\b|"
+    r"(?:add|write)\s+(?:a\s+)?(?:failing\s+)?tests?\b|"
+    r"test-authoring\b|"
+    r"create/add/build\b"
+    r")",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -106,7 +117,7 @@ class PrematureEditDetector(FailureDetector):
             path
             for step in prior
             if step.action_type == ActionType.SEARCH
-            for path in paths_for(step)
+            for path in step.extracted_paths()
             if is_test_path(path)
         ]
         confidence = PREMATURE_EDIT_HIGH_CONFIDENCE if ignored_tests else PREMATURE_EDIT_BASE_CONFIDENCE
@@ -216,11 +227,11 @@ class WrongFileLocalizationDetector(FailureDetector):
         read_paths: set[str] = set()
         for step in trace.steps:
             if step.action_type in {ActionType.SEARCH, ActionType.VERIFY, ActionType.TOOL_RESULT} or step.is_error:
-                for path in paths_for(step):
+                for path in step.extracted_paths():
                     if path not in mentioned:
                         mentioned.append(path)
             if step.action_type == ActionType.READ:
-                read_paths.update(paths_for(step))
+                read_paths.update(step.extracted_paths())
             if step.action_type != ActionType.EDIT:
                 continue
             target = step.target
@@ -247,7 +258,7 @@ class WrongFileLocalizationDetector(FailureDetector):
         first_edit = next((step for step in trace.steps if step.action_type == ActionType.EDIT), None)
         if first_edit:
             prior = context.before(first_edit)
-            search_paths = [path for step in prior if step.action_type == ActionType.SEARCH for path in paths_for(step)]
+            search_paths = [path for step in prior if step.action_type == ActionType.SEARCH for path in step.extracted_paths()]
             has_test = any(is_test_path(path) for path in search_paths)
             has_source = any(not is_test_path(path) for path in search_paths)
             read_tests = any(step.action_type == ActionType.READ and step.touches_test_file for step in prior)
@@ -328,7 +339,7 @@ class OverbroadPatchDetector(FailureDetector):
         for step in trace.steps:
             if step.action_type != ActionType.EDIT:
                 continue
-            paths = paths_for(step) or ([step.target] if step.target else [])
+            paths = step.extracted_paths() or ([step.target] if step.target else [])
             for path in paths:
                 canonical = canonical_edit_path(path)
                 if canonical and canonical not in edited:
@@ -407,20 +418,6 @@ def run_detectors(trace: NormalizedTrace, detectors: list[FailureDetector] | Non
     for detector in detectors or DEFAULT_DETECTORS:
         hypotheses.extend(detector.detect(trace, context))
     return hypotheses
-
-
-def steps_before(steps: list[NormalizedStep], marker: NormalizedStep) -> list[NormalizedStep]:
-    positions = {step.step_id: index for index, step in enumerate(steps)}
-    return steps[: positions.get(marker.step_id, 0)]
-
-
-def steps_after(steps: list[NormalizedStep], marker: NormalizedStep) -> list[NormalizedStep]:
-    positions = {step.step_id: index for index, step in enumerate(steps)}
-    return steps[positions.get(marker.step_id, len(steps)) + 1 :]
-
-
-def paths_for(step: NormalizedStep) -> list[str]:
-    return step.extracted_paths()
 
 
 def dedupe_hypotheses_by_target(hypotheses: list[FailureHypothesis]) -> list[FailureHypothesis]:
@@ -521,22 +518,8 @@ def task_allows_test_updates(trace: NormalizedTrace) -> bool:
 
 def task_is_scaffold_or_test_authoring(trace: NormalizedTrace) -> bool:
     text = " ".join(part for part in (trace.task.description, trace.task.prompt) if part).lower()[:SCAFFOLD_TASK_SCAN_CHARS]
-    phrases = (
-        "create a tiny toy",
-        "toy package",
-        "scaffold",
-        "add a failing test",
-        "add failing test",
-        "write tests",
-        "write a test",
-        "add tests",
-        "test-authoring",
-        "build a toy",
-        "create a package",
-        "create/add/build",
-    )
-    starters = r"(^|[\n.;:]\s*|\b(task|goal|prompt|please|first|start by)\s*:?\s+)"
-    return any(re.search(starters + re.escape(phrase), text) for phrase in phrases)
+    clauses = [clause.strip() for clause in re.split(r"[\n.;:]+", text) if clause.strip()]
+    return any(SCAFFOLD_CLAUSE_RE.search(clause) for clause in clauses)
 
 
 def path_category(path: str) -> str:

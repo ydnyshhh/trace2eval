@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import re
 
-from trace2eval.adapters.common import as_text, extract_paths_from_text
+from trace2eval.adapters.common import as_text
 from trace2eval.schemas import ActionType, NormalizedStep, NormalizedTrace, Phase, RawStep, RawTrace
+from trace2eval.text_utils import extract_paths_from_text
 
 READ_TOOLS = {
     "open_file",

@@ -169,7 +169,7 @@ def test_scaffold_suppression_requires_task_leading_clause() -> None:
     bug_fix = normalize_trace(
         trace_for(
             RawStep(step_id=0, file_path="src/build.py", diff="--- a/src/build.py\n+++ b/src/build.py"),
-            prompt="Fix the build to create a package artifact for release.",
+            prompt="Fix the CI so it can create a package artifact for release.",
         )
     )
 

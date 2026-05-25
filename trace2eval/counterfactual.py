@@ -7,7 +7,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from trace2eval.adapters.common import extract_paths_from_text
 from trace2eval.detectors import canonical_edit_path, normalize_command
 from trace2eval.generation import generate_eval_case
 from trace2eval.io import slugify
@@ -24,6 +23,7 @@ from trace2eval.schemas import (
     Phase,
     RawStep,
 )
+from trace2eval.text_utils import extract_paths_from_text
 
 
 def run_counterfactual_replay(

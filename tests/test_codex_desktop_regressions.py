@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from trace2eval.adapters import CodexJSONLAdapter
-from trace2eval.adapters.common import extract_paths_from_text
 from trace2eval.detectors import (
     PrematureEditDetector,
     RepeatedCommandErrorDetector,
@@ -10,6 +9,7 @@ from trace2eval.detectors import (
 from trace2eval.mining import rank_hypotheses
 from trace2eval.normalize import normalize_trace
 from trace2eval.schemas import ActionType, RawStep, RawTrace, TaskMetadata
+from trace2eval.text_utils import extract_paths_from_text
 
 CODEX_DESKTOP_FALSE_POSITIVE_FIXTURE = Path("examples/fixtures/codex/rollout-desktop-false-positive.jsonl")
 

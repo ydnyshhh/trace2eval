@@ -186,7 +186,11 @@ def rule_read_mentioned_paths_before_edit(trace: NormalizedTrace, eval_case: Eva
     first_edit = trace.steps[first_edit_index]
     expected_paths = expected_mentioned_paths(eval_case)
     if not expected_paths:
-        return True, ["No mentioned paths were encoded in the eval constraints."]
+        fallback_passed, fallback_evidence = rule_first_edit_after_test_read_or_verify(trace, eval_case)
+        return fallback_passed, [
+            "No mentioned paths were encoded in the eval constraints; fell back to first_edit_after_test_read_or_verify.",
+            *fallback_evidence,
+        ]
     prior_reads = [step for step in trace.steps[:first_edit_index] if step.action_type == ActionType.READ]
     missing = [path for path in expected_paths if not any(read_matches_path(step, path) for step in prior_reads)]
     if missing:

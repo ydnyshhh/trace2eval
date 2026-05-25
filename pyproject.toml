@@ -30,6 +30,9 @@ package = true
 [tool.setuptools.packages.find]
 include = ["trace2eval*"]
 
+[tool.setuptools.package-data]
+trace2eval = ["py.typed"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
