@@ -203,6 +203,7 @@ class CounterfactualReplay(Trace2EvalModel):
     counterfactual_result: RunResult
     intervention: dict[str, Any] = Field(default_factory=dict)
     flipped: bool = False
+    causal_support: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

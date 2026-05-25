@@ -87,6 +87,9 @@ def test_counterfactual_command_prints_and_writes_replay(tmp_path) -> None:
     assert "Counterfactual Replay" in result.output
     assert "insert_read_before_edit" in result.output
     assert "flipped: yes" in result.output
+    assert "causal_support: yes" in result.output
+    assert "Original Timeline" in result.output
+    assert "Counterfactual Timeline" in result.output
 
 
 def test_index_and_query_commands_run_duckdb_smoke(tmp_path) -> None:

@@ -41,6 +41,7 @@ def run_counterfactual_replay(
     counterfactual_trace, intervention = build_counterfactual_trace(trace, failure, eval_case)
     original_result = run_eval(eval_case, trace)
     counterfactual_result = run_eval(eval_case, counterfactual_trace)
+    causal_support = not original_result.passed and counterfactual_result.passed
     return CounterfactualReplay(
         source_trace_id=trace.trace_id,
         counterfactual_trace=counterfactual_trace,
@@ -50,10 +51,13 @@ def run_counterfactual_replay(
         counterfactual_result=counterfactual_result,
         intervention=intervention,
         flipped=original_result.passed != counterfactual_result.passed,
+        causal_support=causal_support,
         metadata={
             "symbolic": True,
             "replay_kind": "counterfactual",
             "expected_flip": "original fails and counterfactual passes",
+            "original_timeline": compact_timeline(trace),
+            "counterfactual_timeline": compact_timeline(counterfactual_trace),
         },
     )
 
@@ -102,6 +106,7 @@ def build_counterfactual_trace(
     else:
         intervention = intervene_with_pre_edit_test_read(counterfactual, failure, eval_case)
 
+    annotate_intervention_support(intervention, failure.failure_type)
     renumber_counterfactual_steps(counterfactual, intervention)
     counterfactual.metadata["counterfactual_intervention"] = intervention
     return counterfactual, intervention
@@ -437,6 +442,86 @@ def no_op_intervention(reason: str) -> dict[str, Any]:
     return {"type": "no_op", "summary": reason, "inserted_step_ids": [], "modified_step_ids": []}
 
 
+def annotate_intervention_support(intervention: dict[str, Any], failure_type: str) -> None:
+    if intervention.get("type") == "no_op":
+        intervention["supported"] = False
+        intervention["confidence"] = 0.0
+        intervention["support_reason"] = "No symbolic intervention was available."
+        return
+
+    support = {
+        "premature_edit": (
+            True,
+            0.90,
+            "Direct trajectory intervention: add the missing test read before the first edit.",
+        ),
+        "no_verification": (
+            True,
+            0.90,
+            "Direct trajectory intervention: add verification after the final edit.",
+        ),
+        "repeated_command_error": (
+            True,
+            0.75,
+            "Direct trajectory intervention: change the repeated failing command.",
+        ),
+        "submit_after_failure": (
+            True,
+            0.75,
+            "Direct trajectory intervention: recover before submitting after failed verification.",
+        ),
+        "ignored_tool_error": (
+            True,
+            0.70,
+            "Direct trajectory intervention: insert recovery after the tool error.",
+        ),
+        "wrong_file_localization": (
+            False,
+            0.45,
+            "Proxy intervention only: reading context does not prove the agent selected the correct file.",
+        ),
+        "test_editing_reward_hack": (
+            False,
+            0.40,
+            "Experimental intervention: changing a test edit into a read may erase an action.",
+        ),
+        "overbroad_patch": (
+            False,
+            0.35,
+            "Experimental intervention: narrowing patch scope is symbolic and may not match a realistic fix.",
+        ),
+    }
+    supported, confidence, reason = support.get(
+        failure_type,
+        (
+            False,
+            0.25,
+            "Unsupported detector type for causal counterfactual replay.",
+        ),
+    )
+    intervention["supported"] = supported
+    intervention["confidence"] = confidence
+    intervention["support_reason"] = reason
+
+
+def compact_timeline(trace: NormalizedTrace) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for step in trace.steps:
+        target_or_command = step.command or step.target or step.raw_action or ""
+        rows.append(
+            {
+                "step_id": step.step_id,
+                "action_type": step.action_type.value,
+                "phase": step.phase.value,
+                "target_or_command": target_or_command,
+                "is_error": step.is_error,
+                "error_signature": step.error_signature,
+                "synthetic": bool(step.metadata.get("synthetic_step_id")),
+            }
+        )
+    return rows
+
+
 def print_counterfactual_replay(
     replay: CounterfactualReplay,
     *,
@@ -451,9 +536,15 @@ def print_counterfactual_replay(
     table.add_row("failure_type", replay.failure.failure_type)
     table.add_row("onset_step_id", "" if replay.failure.onset_step_id is None else str(replay.failure.onset_step_id))
     table.add_row("intervention", str(replay.intervention.get("type") or "unknown"))
+    table.add_row("supported", "yes" if replay.intervention.get("supported") else "no")
+    table.add_row("confidence", f"{float(replay.intervention.get('confidence') or 0):.2f}")
+    table.add_row("support_reason", str(replay.intervention.get("support_reason") or ""))
     table.add_row("summary", str(replay.intervention.get("summary") or ""))
     table.add_row("eval", replay.eval_case.eval_id)
     console.print(table)
+
+    print_timeline("Original Timeline", replay.metadata.get("original_timeline") or [], console)
+    print_timeline("Counterfactual Timeline", replay.metadata.get("counterfactual_timeline") or [], console)
 
     result_table = Table(title="Replay Comparison")
     result_table.add_column("Trace")
@@ -474,11 +565,38 @@ def print_counterfactual_replay(
     )
     console.print(result_table)
     flip_text = "yes" if replay.flipped else "no"
+    causal_support_text = "yes" if replay.causal_support else "no"
     causal_text = (
         "original failed and counterfactual passed"
-        if not replay.original_result.passed and replay.counterfactual_result.passed
+        if replay.causal_support
         else "eval result changed" if replay.flipped else "eval result did not change"
     )
     console.print(f"flipped: {flip_text} ({causal_text})")
+    console.print(f"causal_support: {causal_support_text}")
     if output_path:
         console.print(f"wrote: {output_path}")
+
+
+def print_timeline(title: str, rows: list[dict[str, Any]], console: Console) -> None:
+    table = Table(title=title)
+    table.add_column("Step")
+    table.add_column("Action")
+    table.add_column("Target / command")
+    table.add_column("Error")
+    table.add_column("Synthetic")
+    for row in rows:
+        step_id = row.get("step_id")
+        table.add_row(
+            "" if step_id is None else str(step_id),
+            str(row.get("action_type") or ""),
+            truncate_text(str(row.get("target_or_command") or "")),
+            "yes" if row.get("is_error") else "",
+            "yes" if row.get("synthetic") else "",
+        )
+    console.print(table)
+
+
+def truncate_text(value: str, limit: int = 80) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: limit - 3] + "..."
