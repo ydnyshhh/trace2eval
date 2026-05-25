@@ -2,11 +2,11 @@
 
 Trace2Eval is a local-first Python toolkit for turning failed long-horizon coding-agent runs into small, executable regression evals.
 
-The goal is not only to log traces or visualize them. Trace2Eval mines real agent trajectories, finds the earliest causal decision point, extracts a compact slice, and generates a deterministic trajectory-level eval that can be replayed against future Codex CLI, Claude Code, SWE-agent-like, or custom repo-editing agent traces.
+The goal is not only to log traces or visualize them. Trace2Eval mines real agent trajectories, ranks candidate causal failure hypotheses, extracts a compact slice around the suspected onset, and generates a deterministic trajectory-level eval that can be replayed against future Codex CLI, Claude Code, SWE-agent-like, or custom repo-editing agent traces.
 
 ## Why Trace-Derived Evals Matter
 
-Coding agents often fail long before the final error message. A run may spend 40 steps on a repo bug, but the causal failure might have started at step 7 when the agent edited source code before reading the failing test. Trace2Eval turns that pattern into a small eval such as:
+Coding agents often fail long before the final error message. A run may spend 40 steps on a repo bug, but an early candidate cause might have started at step 7 when the agent edited source code before reading the failing test. Trace2Eval turns that pattern into a small eval such as:
 
 > fail if the first EDIT action occurs before reading a test file or running verification.
 
@@ -127,13 +127,13 @@ The adapter preserves session id, usage metadata, structured output, messages, t
 - `trace2eval query --db .trace2eval/trace2eval.duckdb --top-failures`: run structured corpus queries over the optional DuckDB index.
 - `trace2eval report --traces .trace2eval/normalized --failures .trace2eval/reports/failures.jsonl`: print a Rich terminal report.
 
-Reports include a per-trace timeline plus a causal hypothesis section that separates the primary root cause, supporting symptoms, and downstream failures.
+Reports include a per-trace timeline plus a causal hypothesis section that separates the primary candidate root cause, supporting symptoms, and downstream failures.
 
 ## Counterfactual Replay
 
 Counterfactual replay is symbolic trajectory-level validation. It does not mutate source traces, execute a repository, or call an agent. Given a trace and failure hypothesis, Trace2Eval applies a minimal corrective intervention to a copied normalized trace, generates the corresponding eval, and runs that eval against both trajectories.
 
-For example, a `premature_edit` counterfactual inserts a synthetic `READ` of the relevant test before the first `EDIT`. A useful causal slice should usually flip from original failure to counterfactual pass:
+For example, a `premature_edit` counterfactual inserts a synthetic `READ` of the relevant test before the first `EDIT`. A useful candidate causal slice should usually flip from original failure to counterfactual pass:
 
 ```powershell
 uv run trace2eval counterfactual `
@@ -206,7 +206,7 @@ verifier:
       expected_relevant_test_files: [tests/test_parser.py]
 ```
 
-Generated evals are still deterministic trajectory-level proxy evals, but they now carry task-specific constraints from the causal slice: expected relevant tests, expected relevant source files, forbidden premature edit targets, and required observation paths. Runner modes control how broadly those evals are replayed.
+Generated evals are still deterministic trajectory-level proxy evals, but they now carry task-specific constraints from the candidate slice: expected relevant tests, expected relevant source files, forbidden premature edit targets, and required observation paths. Runner modes control how broadly those evals are replayed.
 
 ## Realistic Fixtures
 
@@ -241,6 +241,17 @@ Use `--strict` for CI seed fixtures where misses should fail the command. Use `-
 
 The current checked-in cases are sanitized seed examples. The next useful data step is replacing or extending them with 5-10 actual Codex CLI and Claude Code sessions from small repositories.
 
+Detector scores are deterministic heuristics, not calibrated probabilities. They combine hand-chosen severity and confidence constants with ranking features such as onset position and whether the failure changes state. Treat benchmark output as an engineering signal, not a statistical claim, until it is calibrated on a larger real-run corpus.
+
+Suggested benchmark table for future releases:
+
+| Detector | Precision | Recall | False-positive examples | Useful eval generated? |
+| --- | ---: | ---: | --- | ---: |
+| premature_edit | TBD | TBD | TBD | TBD |
+| no_verification | TBD | TBD | TBD | TBD |
+| wrong_file_localization | TBD | TBD | TBD | TBD |
+| submit_after_failure | TBD | TBD | TBD | TBD |
+
 ## Failure Detector Taxonomy
 
 - `premature_edit`: first edit occurs before reading a test file or running verification.
@@ -256,12 +267,15 @@ The current checked-in cases are sanitized seed examples. The next useful data s
 
 - The first version is deterministic and does not use LLM-as-judge.
 - Eval replay is trajectory-level proxy validation; it does not yet spin up a full repository sandbox.
+- Counterfactual replay is symbolic trajectory-level validation. It tests whether a generated eval flips under a minimal intervention, not whether the real repository would be fixed.
+- DuckDB is an optional rebuildable index over JSON/YAML artifacts, not the source of truth or a database-backed storage layer.
 - Codex and Claude schemas may evolve, so adapters preserve raw payloads and only map fields that are confidently identifiable.
-- DuckDB, vector search, counterfactual replay, and full-task validation are intentionally left out of the MVP.
+- Detector confidence and severity values are hand-tuned heuristics and need benchmark calibration.
+- Vector search and full-task validation are intentionally left out of the MVP.
 
 ## Roadmap
 
-- Add DuckDB-backed storage for larger trace corpora.
+- Expand DuckDB query coverage for larger trace corpora while keeping file artifacts as source of truth.
 - Add optional LLM-assisted failure summarization.
 - Add repository snapshot capture and full-task replay.
 - Add vector search over traces and causal slices.
