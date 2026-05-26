@@ -4,6 +4,10 @@ Trace2Eval is a local-first Python toolkit for turning failed long-horizon codin
 
 It ingests real Codex CLI and Claude Code traces, normalizes them into action timelines, detects candidate causal failure hypotheses, extracts compact slices around the suspected onset, generates deterministic trajectory-level evals, and replays those evals against future traces.
 
+![Trace2Eval system design](docs/trace2eval-system-design.png)
+
+*Trace2Eval turns messy failed agent traces into compact regression evals by ingesting raw logs, normalizing action timelines, mining failure hypotheses, generating eval rules, and replaying them against future traces.*
+
 For the full project guide, see [docs/TRACE2EVAL_GUIDE.md](docs/TRACE2EVAL_GUIDE.md).
 
 ## Why It Exists
